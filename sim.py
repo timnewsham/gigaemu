@@ -125,6 +125,7 @@ class Trace:
     def __init__(self, name, traces):
         self.name = name
         self.traces = traces
+        self.watch_every = True
         self.watches = {}
         self.prev = {}
 
@@ -137,12 +138,18 @@ class Trace:
 
     def watcher(self):
         cur = self._gets()
-        for nm, prev in self.prev.items():
-            if cur[nm] != prev:
-                print(f"{self.name} WATCH {nm}: {prev} -> {cur[nm]}")
+        vs = []
+        for nm in sorted(self.prev):
+            if self.watch_every:
+                vs.append(f"{nm}:{cur[nm]}")
+            elif cur[nm] != self.prev[nm]:
+                vs.append(f"{nm}:{self.prev[nm]}->{cur[nm]}")
+        if vs:
+            print(f"{self.name} WATCH {' '.join(vs)}")
         self.prev = cur
 
-    def watch(self, **watches):
+    def watch(self, every, **watches):
+        self.watch_every = every
         self.watches = watches
         self.prev = self._gets()
 
@@ -545,7 +552,8 @@ def test():
 
     trace = ['PC']
     m = Board("board", rom, trace=trace)
-    #m.watch(PCLO="hex:PC[0:8]", WE="WEx")
+    m.watch(True, PCLO="hex:PC[0:8]", WE="WEx")
+    #m.watch(False, PCLO="hex:PC[0:8]", WE="WEx")
     for _ in range(10):
         m.step()
 
