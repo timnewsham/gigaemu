@@ -72,21 +72,21 @@ def test_prims():
 # chips section
 
 class Trace:
-    def __init__(self, name, debug):
+    def __init__(self, name, traces):
         self.name = name
-        self.debug = debug
+        self.traces = traces
 
     def trace(self, cat, s):
-        if self.debug and (cat in self.debug or "*" in self.debug):
+        if self.traces and (cat in self.traces or "*" in self.traces):
             print(f"{self.name} {cat} {s}")
 
 class Rom(Trace):
     """
     A generic 16-bit addressable, 16-bit wide ROM.
     """
-    def __init__(self, name, prog, debug=None):
+    def __init__(self, name, prog, trace=None):
         assert len(prog) == 2 * 64 * 1024
-        Trace.__init__(self, name, debug)
+        Trace.__init__(self, name, trace)
         self.data = prog
 
     def fetch(self, *addr):
@@ -97,14 +97,30 @@ class Rom(Trace):
         self.trace("FETCH", f"addr={naddr:04x} low={l:02x} hi={h:02x}")
         return num_bits(8, l) + num_bits(8, h)
 
+class Decoder139(Trace):
+    """
+    74HCT139 is a 2:4 decoder with active-low outputs.
+    """
+    def __init__(self, name, trace=None):
+        Trace.__init__(self, name, trace)
+
+    def inputs(self, A=(0,0), E=0):
+        self.A = A
+        self.E = E
+
+        if not E:
+            self.O = bit_invs(*decode(*self.A))
+        else:
+            self.O = (1,1,1,1)
+
 class Counter161(Trace):
     """
     74HCT161 is a 4-bit counter.
     Reset MR' is not simulated.
     Clock Cp is implicit.
     """
-    def __init__(self, name, debug=None):
-        Trace.__init__(self, name, debug)
+    def __init__(self, name, trace=None):
+        Trace.__init__(self, name, trace)
         self.Q = (0,0,0,0)
         self.TC = 0
 
@@ -136,8 +152,8 @@ class Reg273(Trace):
     Clock Cp is implicit.
     Mr' is not implemented.
     """
-    def __init__(self, name, debug=None):
-        Trace.__init__(self, name, debug)
+    def __init__(self, name, trace=None):
+        Trace.__init__(self, name, trace)
         self.Q = (0,0,0,0,0,0,0,0)
 
     def inputs(self, D=(0,0,0,0,0,0,0,0)):
@@ -153,23 +169,30 @@ class Reg273(Trace):
 # board section
 
 class Board(Trace):
-    def __init__(self, name, rom, debug=None):
-        Trace.__init__(self, name, debug)
+    def __init__(self, name, rom, trace=None):
+        Trace.__init__(self, name, trace)
 
-        debug = None #["*"]
-        self.rom_u7 = Rom("u7", rom, debug=debug)
+        trace = None #["*"]
+        self.rom_u7 = Rom("u7", rom, trace=trace)
+
+        # U1 clock and U2 reset not simulated directly.
 
         # PC
-        debug = None #["*"]
-        self.u3_pc03 = Counter161("u3", debug=debug)
-        self.u4_pc47 = Counter161("u4", debug=debug)
-        self.u5_pc811 = Counter161("u5", debug=debug)
-        self.u6_pc1215 = Counter161("u6", debug=debug)
+        trace = None #["*"]
+        self.u3_pc03 = Counter161("u3", trace=trace)
+        self.u4_pc47 = Counter161("u4", trace=trace)
+        self.u5_pc811 = Counter161("u5", trace=trace)
+        self.u6_pc1215 = Counter161("u6", trace=trace)
 
         # IR/D registers
-        debug = None #["*"]
-        self.u8_ir = Reg273("u8", debug=debug)
-        self.u9_d = Reg273("u9", debug=debug)
+        trace = None #["*"]
+        self.u8_ir = Reg273("u8", trace=trace)
+        self.u9_d = Reg273("u9", trace=trace)
+
+        # U10 tri-state buffer not simulated directly.
+
+        trace = None
+        self.u11_busaccess = Decoder139("u11", trace=trace)
 
         # bootstrap values needed before they are updated...
         self.PC = self.u3_pc03.Q + self.u4_pc47.Q + self.u5_pc811.Q + self.u6_pc1215.Q
@@ -186,7 +209,6 @@ class Board(Trace):
         self.clock1_h()
 
     def clock1_l(self):
-
         q = self.rom_u7.fetch(*self.PC)
         self.u8_ir.inputs(D=q[0:8])
         self.u9_d.inputs(D=q[8:16])
@@ -197,11 +219,15 @@ class Board(Trace):
         self.IR = self.u8_ir.Q
         self.D = self.u9_d.Q
 
+        self.u11_busaccess.inputs(A=self.IR[0:2])
+        self.DEx, self.OEx, self.AEx, self.IEx = self.u11_busaccess.O
+
         # tracing...
         pc = bit_num(*self.PC)
         ir = bit_num(*self.IR)
         d = bit_num(*self.D)
         self.trace("PC", f"pc={pc:04x} ir={ir:02x} d={d:02x}")
+        self.trace("BUS", f"DEx={self.DEx} OEx={self.OEx} AEx={self.AEx} IEx={self.IEx}")
 
     def clock1_h(self):
         # XXX dummy values
@@ -225,7 +251,8 @@ def test():
     fn = 'ROMv6.rom'
     rom = open(fn, 'rb').read()
 
-    m = Board("board", rom, debug=['*'])
+    trace = ['PC']
+    m = Board("board", rom, trace=trace)
     for _ in range(10):
         m.step()
 
