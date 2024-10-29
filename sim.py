@@ -118,19 +118,23 @@ class Decoder138(Trace):
 
 class Decoder139(Trace):
     """
-    74HCT139 is a 2:4 decoder with active-low outputs.
+    74HCT139 is a dual 2:4 decoder with active-low outputs.
     """
     def __init__(self, name, trace=None):
         Trace.__init__(self, name, trace)
 
-    def inputs(self, A=(0,0), E=0):
-        self.A = A
-        self.E = E
+    def inputs(self, Ea=0, Aa=(0,0), Eb=0, Ab=(0,0)):
+        self.Aa, self.Ea = Aa, Ea
+        self.Ab, self.Eb = Aa, Eb
 
-        if not E:
-            self.O = bit_invs(*decode(*self.A))
+        if not Ea:
+            self.Oa = bit_invs(*decode(*self.Aa))
         else:
-            self.O = (1,1,1,1)
+            self.Oa = (1,1,1,1)
+        if not Eb:
+            self.Ob = bit_invs(*decode(*self.Ab))
+        else:
+            self.Ob = (1,1,1,1)
 
 class Mux153(Trace):
     """
@@ -157,17 +161,18 @@ class Mux153(Trace):
 
 class DiodeMatrix(Trace):
     """
-    Diode matrix implements wired-nor (or wired-nand for active-low) logic
+    Diode matrix implements wired-and (or wired-or for active-low) logic
     with a matrix of diodes.
     The input provides the rows, and the outputs the columns.
-    A column is 0 if any of the connected rows are 0, otherwise it is pulled up to 1.
+    The matrix[row][col] is 1 if there's diode tieing the column to the input row.
+    A column value is 0 if any of the connected rows are 0, otherwise it is pulled up to 1.
     """
-    def __init__(self, name, rows, trace=None):
-        assert len(rows) > 0
-        self.matrix = rows
-        self.nrows = len(rows)
-        self.ncols = len(rows[0])
-        assert all(len(row) == self.ncols for row in rows)
+    def __init__(self, name, matrix, trace=None):
+        assert len(matrix) > 0
+        self.matrix = matrix
+        self.nrows = len(matrix)
+        self.ncols = len(matrix[0])
+        assert all(len(row) == self.ncols for row in self.matrix)
         Trace.__init__(self, name, trace)
 
         # we could pre-compute a function for each column for speed.
@@ -180,7 +185,7 @@ class DiodeMatrix(Trace):
         colvals = []
         for col in range(self.ncols):
             colval = 1 # pull-up
-            for row in range(self.rows):
+            for row in range(self.nrows):
                 if I[row] == 0 and self.matrix[row][col] == 1:
                     colval = 0 # grounded through diode
             colvals.append(colval)
@@ -266,10 +271,13 @@ class Board(Trace):
 
         # instruction decode logic
         trace = None
-        self.u11_busaccess = Decoder139("u11", trace=trace)
+        self.u11_busjmp = Decoder139("u11", trace=trace) # two decoders, one for busaccess, one for jmp
         self.u12_cond = Mux153("u12", trace=trace)
         self.u13_mode = Decoder138("u13", trace=trace)
         self.u14_instr = Decoder138("u14", trace=trace)
+
+        # U15 octal inverter not represented. See comments later.
+        # U16 quad or not represented. See comments later.
 
         self.diode_mode = DiodeMatrix("diode_mode", [
             [1, 0, 0, 0],
@@ -283,7 +291,7 @@ class Board(Trace):
             [0, 1, 1, 1],
             ], trace=trace)
 
-        self.diode_isntr = DiodeMatrix("diode_instr", [
+        self.diode_instr = DiodeMatrix("diode_instr", [
             # schematic suggests this diode can be skipped if just using
             # diodes on first column for LD, AND, OR, XOR.
             [1, 0, 0, 0, 0], # IR7
@@ -301,6 +309,8 @@ class Board(Trace):
         # bootstrap values needed before they are updated...
         self.PC = self.u3_pc03.Q + self.u4_pc47.Q + self.u5_pc811.Q + self.u6_pc1215.Q
         assert len(self.PC) == 16
+        self.AC = (0,0,0,0,0,0,0,0)
+        self.CO = 0
 
         # XXX
         self.PL = 1
@@ -323,8 +333,39 @@ class Board(Trace):
         self.IR = self.u8_ir.Q
         self.D = self.u9_d.Q
 
-        self.u11_busaccess.inputs(A=self.IR[0:2])
-        self.DEx, self.OEx, self.AEx, self.IEx = self.u11_busaccess.O
+        # logic based on IR/D
+        self.u11_busjmp.inputs(Aa=self.IR[0:2], Ab=self.IR[2:4])
+        self.DEx, self.OEx, self.AEx, self.IEx = self.u11_busjmp.Oa
+        self.BFx = self.u11_busjmp.Ob[0]
+
+        self.u14_instr.inputs(A=self.IR[5:8])
+        self.Wx = self.u14_instr.O[6]
+        self.W = bit_inv(self.Wx) # U15 1 of 8.
+
+        ia = self.IR[2:4] + (0,)
+        sel = (self.AC[7], self.CO)
+        self.u12_cond.inputs(Ia=ia, Ib=(1,1,1,1), S=sel, Ea=self.u14_instr.O[7]) # after u14 updated
+        self.u13_mode.inputs(A=self.IR[2:5], E3=self.u14_instr.O[7]) # after u14 updated
+        self.XL = self.u13_mode.O[4]
+        self.YL = self.u13_mode.O[5]
+        self.IX = bit_inv(self.u13_mode.O[7]) # U15 1 of 8
+
+        self.diode_mode.inputs(self.u13_mode.O) # after u13 updated
+        self.EL = self.diode_mode.O[2]
+        self.EH = self.diode_mode.O[3]
+        self.LDx = bit_or(self.diode_mode.O[0], self.W) # after self.W updated, U16 1 of 4.
+        self.OLx = bit_or(self.diode_mode.O[1], self.W) # after self.W updated, U16 1 of 4.
+
+        inp = (self.IR[7],) + self.u14_instr.O
+        self.diode_instr.inputs(inp) # after u14 updated
+        self.AL = bit_inv(self.diode_instr.O[0])    # after diode_instr updated, U15 1 of 8.
+        self.AR = bit_invs(self.diode_instr.O[1:5]) # after diode_instr updated, U15 5 of 8.
+
+        phx = bit_or(self.u14_instr.O[7], self.u11_busjmp.Ob[0]) # after u11/u14 updated, U16 1 of 4.
+        self.PHx = phx
+        self.PLx = bit_and(bit_inv(self.u12_cond.Za), phx) # inv from U15 1 of 8, AND implemented with diodes and pull-up.
+
+        # TODO: WEx is and(CLK1, Wx), we'll probably just do that "implicitly"
 
         # tracing...
         n = lambda x : bit_num(*x)
