@@ -50,6 +50,49 @@ def decode(*bs):
     n = bit_num(*bs)
     return tuple([bit(m == n) for m in range(sz)])
 
+def get_field(v, fn):
+    """
+    get_field(foo, "bar[3].baz") returns foo.bar[3].baz.
+    """
+    make_hex = False
+    if fn.startswith('hex:'):
+        make_hex = True
+        fn = fn[4:]
+
+    while fn:
+        if fn.startswith('.'):
+            fn = fn[1:]
+
+        if fn.startswith('['): # index into v
+            idx, fn = fn[1:].split(']', 1)
+            if isinstance(v, tuple) or isinstance(v, list):
+                if ':' in idx:
+                    a,b = idx.split(':')
+                    v = v[int(a) : int(b)]
+                else:
+                    v = v[int(idx)]
+            else:
+                v = v[idx]
+
+        else: # access field in fn
+            # split on first dot or bracket
+            dot = fn.find('.')
+            bracket = fn.find('[')
+            if bracket != -1 and (bracket < dot or dot == -1):
+                # split at bracket, keeping the bracket
+                cur, fn = fn[:bracket], fn[bracket:]
+            elif dot != -1 and (dot < brakcet or bracket == -1):
+                # split at dot, discarding the dot
+                cur, fn = fn[:dot], fn[dot:]
+            else:
+                cur, fn = fn, None
+
+            v = v.__getattribute__(cur)
+
+    if make_hex:
+        v = hex(bit_num(*v))
+    return v
+
 def test_prims():
     assert bit(False) == 0
     assert bit(True) == 1
@@ -69,16 +112,73 @@ def test_prims():
     assert decode(1,0) == (0,1,0,0)
     assert decode(1,1) == (0,0,0,1)
 
-# chips section
+    class Obj: pass
+    o = Obj()
+    o.x = [Obj() for n in range(3)]
+    o.x[1].a = 'a'
+    o.x[2] = {"hi": Obj()}
+    o.x[2]["hi"].y = 23
+    assert get_field(o, "x[1].a") == 'a'
+    assert get_field(o, 'x[2][hi].y') == 23
 
 class Trace:
     def __init__(self, name, traces):
         self.name = name
         self.traces = traces
+        self.watches = {}
+        self.prev = {}
 
     def trace(self, cat, s):
         if self.traces and (cat in self.traces or "*" in self.traces):
             print(f"{self.name} {cat} {s}")
+
+    def _gets(self):
+        return dict((k, get_field(self, v)) for k,v in self.watches.items())
+
+    def watcher(self):
+        cur = self._gets()
+        for nm, prev in self.prev.items():
+            if cur[nm] != prev:
+                print(f"{self.name} WATCH {nm}: {prev} -> {cur[nm]}")
+        self.prev = cur
+
+    def watch(self, **watches):
+        self.watches = watches
+        self.prev = self._gets()
+
+# chips section
+
+class DiodeMatrix(Trace):
+    """
+    Diode matrix implements wired-and (or wired-or for active-low) logic
+    with a matrix of diodes.
+    The input provides the rows, and the outputs the columns.
+    The matrix[row][col] is 1 if there's diode tieing the column to the input row.
+    A column value is 0 if any of the connected rows are 0, otherwise it is pulled up to 1.
+    """
+    def __init__(self, name, matrix, trace=None):
+        assert len(matrix) > 0
+        self.matrix = matrix
+        self.nrows = len(matrix)
+        self.ncols = len(matrix[0])
+        assert all(len(row) == self.ncols for row in self.matrix)
+        Trace.__init__(self, name, trace)
+
+        # we could pre-compute a function for each column for speed.
+
+    def inputs(self, I):
+        assert len(I) == self.nrows
+        self.I = I
+
+        # this could be a complicated one-liner with loss of clarity
+        colvals = []
+        for col in range(self.ncols):
+            colval = 1 # pull-up
+            for row in range(self.nrows):
+                if I[row] == 0 and self.matrix[row][col] == 1:
+                    colval = 0 # grounded through diode
+            colvals.append(colval)
+        self.O = tuple(colvals)
 
 class Rom(Trace):
     """
@@ -89,13 +189,41 @@ class Rom(Trace):
         Trace.__init__(self, name, trace)
         self.data = prog
 
-    def fetch(self, *addr):
-        assert len(addr) == 16
-        naddr = bit_num(*addr)
-        l = self.data[2*naddr]
-        h = self.data[2*naddr+1]
-        self.trace("FETCH", f"addr={naddr:04x} low={l:02x} hi={h:02x}")
-        return num_bits(8, l) + num_bits(8, h)
+    def fetch(self, A):
+        assert len(A) == 16
+        addr = bit_num(*A)
+        l = self.data[2*addr]
+        h = self.data[2*addr+1]
+        self.trace("FETCH", f"A={addr:04x} D={l:02x}:{h:02x}")
+        self.A = A
+        self.D = num_bits(8, l) + num_bits(8, h)
+        return self.D
+
+class Ram(Trace):
+    """
+    A generic 15-bit addressable, 8-bit wide RAM.
+    WE is implictly handled by the clock method.
+    """
+    def __init__(self, name, trace=None):
+        Trace.__init__(self, name, trace)
+        self.data = [0] * (32 * 1024)
+
+    def fetch(self, A):
+        assert len(A) == 15
+        addr = bit_num(*A)
+        d = self.data[addr]
+        self.trace("FETCH", f"A={addr:04x} -> D={d:02x}")
+        self.A = A
+        self.D = num_bits(8, d)
+        return self.D
+
+    def store(self, A, D):
+        assert len(A) == 15
+        assert len(D) == 8
+        addr = bit_num(*A)
+        d = bit_num(*D)
+        self.trace("STORE", f"A={addr:04x} D={d:02x}")
+        self.data[addr] = d
 
 class Decoder138(Trace):
     """
@@ -159,37 +287,24 @@ class Mux153(Trace):
         else:
             self.Zb = 0
 
-class DiodeMatrix(Trace):
+class Mux157(Trace):
     """
-    Diode matrix implements wired-and (or wired-or for active-low) logic
-    with a matrix of diodes.
-    The input provides the rows, and the outputs the columns.
-    The matrix[row][col] is 1 if there's diode tieing the column to the input row.
-    A column value is 0 if any of the connected rows are 0, otherwise it is pulled up to 1.
+    74HCT157 is a quad 2:1 mux.
+    E is an active low enable.
     """
-    def __init__(self, name, matrix, trace=None):
-        assert len(matrix) > 0
-        self.matrix = matrix
-        self.nrows = len(matrix)
-        self.ncols = len(matrix[0])
-        assert all(len(row) == self.ncols for row in self.matrix)
+    def __init__(self, name, trace=None):
         Trace.__init__(self, name, trace)
 
-        # we could pre-compute a function for each column for speed.
+    def inputs(self, Ia=(0,0,0,0), Ib=(0,0,0,0), E=0, S=0):
+        self.Ia = Ia
+        self.Ib = Ib
+        self.E = E
+        self.S = S
 
-    def inputs(self, I):
-        assert len(I) == self.nrows
-        self.I = I
-
-        # this could be a complicated one-liner with loss of clarity
-        colvals = []
-        for col in range(self.ncols):
-            colval = 1 # pull-up
-            for row in range(self.nrows):
-                if I[row] == 0 and self.matrix[row][col] == 1:
-                    colval = 0 # grounded through diode
-            colvals.append(colval)
-        self.O = tuple(colvals)
+        if self.E:
+            self.Z = mux(self.S, self.Ia, self.Ib)
+        else:
+            self.Z = (0,0,0,0)
 
 class Counter161(Trace):
     """
@@ -306,26 +421,41 @@ class Board(Trace):
             [1, 1, 0, 1, 0], # Bcc
             ], trace=trace)
 
+        self.u32_addr = Mux157("u32", trace=trace)
+        self.u33_addr = Mux157("u33", trace=trace)
+        self.u34_addr = Mux157("u34", trace=trace)
+        self.u35_addr = Mux157("u35", trace=trace)
+        self.u36_ram = Ram("u36", trace=trace)
+
+
         # bootstrap values needed before they are updated...
         self.PC = self.u3_pc03.Q + self.u4_pc47.Q + self.u5_pc811.Q + self.u6_pc1215.Q
         assert len(self.PC) == 16
         self.AC = (0,0,0,0,0,0,0,0)
         self.CO = 0
+        self.WEx = 1
+        self.A = (0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0)
+        self.BUS = (0,0,0,0,0,0,0,0)
 
         # XXX
         self.PL = 1
         self.PH = 1
-        self.BUS = (0,0,1,1,0,0,1,1)
         self.Y = (1,1,0,0,1,1,0,0)
 
     def step(self):
         self.clock1_l()
         self.clock1_h()
+        self.clock2_l()
+        self.clock2_h()
+        self.watcher()
 
     def clock1_l(self):
-        q = self.rom_u7.fetch(*self.PC)
-        self.u8_ir.inputs(D=q[0:8])
-        self.u9_d.inputs(D=q[8:16])
+        if self.WEx == 0:
+            self.u36_ram.store(self.A[0:15], self.BUS)
+
+        self.rom_u7.fetch(self.PC)
+        self.u8_ir.inputs(D=self.rom_u7.D[0:8])
+        self.u9_d.inputs(D=self.rom_u7.D[8:16])
 
         self.u8_ir.clock()
         self.u9_d.clock()
@@ -365,7 +495,10 @@ class Board(Trace):
         self.PHx = phx
         self.PLx = bit_and(bit_inv(self.u12_cond.Za), phx) # inv from U15 1 of 8, AND implemented with diodes and pull-up.
 
-        # TODO: WEx is and(CLK1, Wx), we'll probably just do that "implicitly"
+        # WEx comes from bit_or(CLK1, Wx), but we don't have explicit clock signals.
+        # it will latch RAM when Wx is true (0) and CLK1 goes low.
+        # This omits the U16 1 of 4 in the simulation.
+        self.WEx = self.Wx #
 
         # tracing...
         n = lambda x : bit_num(*x)
@@ -388,6 +521,22 @@ class Board(Trace):
         self.PC = self.u3_pc03.Q + self.u4_pc47.Q + self.u5_pc811.Q + self.u6_pc1215.Q
         assert len(self.PC) == 16
 
+    def clock2_l(self):
+        # TODO: latch ALU output into AC
+        # TODO: latch ALU output into Y
+        # TODO: latch ALU output into OUT
+
+        # pickup which enabled output goes to self.BUS
+        # D reg if DEx (clock1_l)
+        # RAM if OEx (clock1_l)
+        # AC if AEx (clock2_l)
+        # INPUT if IEx (??)
+        pass
+
+    def clock2_h(self):
+        # TODO: maybe load ALU into X, or increment X.
+        pass
+
 def test():
     test_prims()
 
@@ -396,6 +545,7 @@ def test():
 
     trace = ['PC']
     m = Board("board", rom, trace=trace)
+    #m.watch(PCLO="hex:PC[0:8]", WE="WEx")
     for _ in range(10):
         m.step()
 
