@@ -71,18 +71,23 @@ def test_prims():
 
 # chips section
 
-class Rom:
+class Trace:
+    def __init__(self, name, debug):
+        self.name = name
+        self.debug = debug
+
+    def trace(self, cat, s):
+        if self.debug and (cat in self.debug or "*" in self.debug):
+            print(f"{self.name} {cat} {s}")
+
+class Rom(Trace):
     """
     A generic 16-bit addressable, 16-bit wide ROM.
     """
     def __init__(self, name, prog, debug=None):
         assert len(prog) == 2 * 64 * 1024
-        self.name = name
+        Trace.__init__(self, name, debug)
         self.data = prog
-        self.debug = debug
-
-    def trace(self, cat, s):
-        trace(self.name, self.debug, cat, s)
 
     def fetch(self, *addr):
         assert len(addr) == 16
@@ -92,28 +97,16 @@ class Rom:
         self.trace("FETCH", f"addr={naddr:04x} low={l:02x} hi={h:02x}")
         return num_bits(8, l) + num_bits(8, h)
 
-def trace(name, dbg, cat, s):
-    if dbg and (cat in dbg or "*" in dbg):
-        print(f"{name} {cat} {s}")
-
-class Counter161:
+class Counter161(Trace):
     """
     74HCT161 is a 4-bit counter.
     Reset MR' is not simulated.
     Clock Cp is implicit.
-
-    TC simulation is not a look-ahead as in the actual chip.
-    It reflects the carry out of Q after Q has been latched.
-    This means updating counters needs to be done in careful order.
     """
     def __init__(self, name, debug=None):
-        self.name = name
-        self.debug = debug
+        Trace.__init__(self, name, debug)
         self.Q = (0,0,0,0)
         self.TC = 0
-
-    def trace(self, cat, s):
-        trace(self.name, self.debug, cat, s)
 
     def inputs(self, Cep=1, Cet=1, Pe=0, P=(0,0,0,0)):
         assert len(P) == 4
@@ -137,60 +130,94 @@ class Counter161:
         else:
             self.trace("HOLD", f"Q={self.Q}")
 
+class Reg273(Trace):
+    """
+    74HCT273 is an 8-bit register.
+    Clock Cp is implicit.
+    Mr' is not implemented.
+    """
+    def __init__(self, name, debug=None):
+        Trace.__init__(self, name, debug)
+        self.Q = (0,0,0,0,0,0,0,0)
+
+    def inputs(self, D=(0,0,0,0,0,0,0,0)):
+        assert len(D) == 8
+        self.D = D
+        self.trace("IN", f"D={D}")
+
+    def clock(self):
+        self.trace("LOAD", f"Q={self.Q} -> Q={self.D}")
+        self.Q = self.D
+
+
 # board section
 
-class Board:
+class Board(Trace):
     def __init__(self, name, rom, debug=None):
-        self.name = name
-        self.debug = debug
+        Trace.__init__(self, name, debug)
 
         debug = None #["*"]
         self.rom_u7 = Rom("u7", rom, debug=debug)
 
         # PC
         debug = None #["*"]
-        self.pc03_u3 = Counter161("u3", debug=debug)
-        self.pc47_u4 = Counter161("u4", debug=debug)
-        self.pc811_u5 = Counter161("u5", debug=debug)
-        self.pc1215_u6 = Counter161("u6", debug=debug)
+        self.u3_pc03 = Counter161("u3", debug=debug)
+        self.u4_pc47 = Counter161("u4", debug=debug)
+        self.u5_pc811 = Counter161("u5", debug=debug)
+        self.u6_pc1215 = Counter161("u6", debug=debug)
 
-    def trace(self, cat, s):
-        trace(self.name, self.debug, cat, s)
+        # IR/D registers
+        debug = None #["*"]
+        self.u8_ir = Reg273("u8", debug=debug)
+        self.u9_d = Reg273("u9", debug=debug)
+
+        # bootstrap values needed before they are updated...
+        self.PC = self.u3_pc03.Q + self.u4_pc47.Q + self.u5_pc811.Q + self.u6_pc1215.Q
+        assert len(self.PC) == 16
+
+        # XXX
+        self.PL = 1
+        self.PH = 1
+        self.BUS = (0,0,1,1,0,0,1,1)
+        self.Y = (1,1,0,0,1,1,0,0)
 
     def step(self):
         self.clock1_l()
         self.clock1_h()
 
+    def clock1_l(self):
+
+        q = self.rom_u7.fetch(*self.PC)
+        self.u8_ir.inputs(D=q[0:8])
+        self.u9_d.inputs(D=q[8:16])
+
+        self.u8_ir.clock()
+        self.u9_d.clock()
+
+        self.IR = self.u8_ir.Q
+        self.D = self.u9_d.Q
+
+        # tracing...
+        pc = bit_num(*self.PC)
+        ir = bit_num(*self.IR)
+        d = bit_num(*self.D)
+        self.trace("PC", f"pc={pc:04x} ir={ir:02x} d={d:02x}")
+
     def clock1_h(self):
         # XXX dummy values
-        PL = 1
-        PH = 1
-        BUS = (0,0,1,1,0,0,1,1)
-        Y = (1,1,0,0,1,1,0,0)
 
-        self.pc03_u3.inputs(Pe=PL, P=BUS[0:4])
-        self.pc47_u4.inputs(Pe=PL, Cet=self.pc03_u3.TC, P=BUS[4:8])
-        self.pc811_u5.inputs(Pe=PH, Cep=PL, Cet=self.pc47_u4.TC, P=Y[0:4])
-        self.pc1215_u6.inputs(Pe=PH, Cep=PL, Cet=self.pc811_u5.TC, P=Y[4:8])
+        self.u3_pc03.inputs(Pe=self.PL, P=self.BUS[0:4])
+        self.u4_pc47.inputs(Pe=self.PL, Cet=self.u3_pc03.TC, P=self.BUS[4:8])
+        self.u5_pc811.inputs(Pe=self.PH, Cep=self.PL, Cet=self.u4_pc47.TC, P=self.Y[0:4])
+        self.u6_pc1215.inputs(Pe=self.PH, Cep=self.PL, Cet=self.u5_pc811.TC, P=self.Y[4:8])
 
-        self.pc03_u3.clock()
-        self.pc47_u4.clock()
-        self.pc811_u5.clock()
-        self.pc1215_u6.clock()
+        self.u3_pc03.clock()
+        self.u4_pc47.clock()
+        self.u5_pc811.clock()
+        self.u6_pc1215.clock()
 
-    def clock1_l(self):
-        self.PC = self.pc03_u3.Q + self.pc47_u4.Q + self.pc811_u5.Q + self.pc1215_u6.Q
+        self.PC = self.u3_pc03.Q + self.u4_pc47.Q + self.u5_pc811.Q + self.u6_pc1215.Q
         assert len(self.PC) == 16
-        q = self.rom_u7.fetch(*self.PC)
-        ir = q[0:8]
-        d = q[8:16]
-
-        # TODO: latch this into IR/D
-
-        npc = bit_num(*self.PC)
-        nir = bit_num(*ir)
-        nd = bit_num(*d)
-        self.trace("PC", f"pc={npc:04x} ir={nir:02x} d={nd:02x}")
 
 def test():
     test_prims()
