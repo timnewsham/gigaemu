@@ -123,15 +123,30 @@ def test_prims():
 
 class Trace:
     def __init__(self, name, traces):
+        # Trace names can specify a module name with a "name:" prefix.
+        # Filter out all trace names that arent for this module, and
+        # strip the module name prefix.
+        if traces is None:
+            traces = []
+        prefix = name + ":"
+        mytraces = []
+        for tracename in traces:
+            if ':' in tracename:
+                if tracename.startswith(prefix):
+                    newname = tracename[len(prefix):]
+                    mytraces.append(newname)
+            else:
+                mytraces.append(tracename)
+
         self.name = name
-        self.traces = traces
+        self.traces = mytraces
         self.watch_every = True
         self.watches = {}
         self.prev = {}
 
     def trace(self, cat, s):
-        if self.traces and (cat in self.traces or "*" in self.traces):
-            print(f"{self.name} {cat} {s}")
+        if cat in self.traces or "*" in self.traces:
+            print(f"{self.name}:{cat} {s}")
 
     def _gets(self):
         return dict((k, get_field(self, v)) for k,v in self.watches.items())
@@ -372,32 +387,19 @@ class Board(Trace):
     def __init__(self, name, rom, trace=None):
         Trace.__init__(self, name, trace)
 
-        trace = None #["*"]
-        self.rom_u7 = Rom("u7", rom, trace=trace)
-
         # U1 clock and U2 reset not simulated directly.
-
-        # PC
-        trace = None #["*"]
         self.u3_pc03 = Counter161("u3", trace=trace)
         self.u4_pc47 = Counter161("u4", trace=trace)
         self.u5_pc811 = Counter161("u5", trace=trace)
         self.u6_pc1215 = Counter161("u6", trace=trace)
-
-        # IR/D registers
-        trace = None #["*"]
+        self.u7_rom = Rom("u7", rom, trace=trace)
         self.u8_ir = Reg273("u8", trace=trace)
         self.u9_d = Reg273("u9", trace=trace)
-
         # U10 tri-state buffer not simulated directly.
-
-        # instruction decode logic
-        trace = None
         self.u11_busjmp = Decoder139("u11", trace=trace) # two decoders, one for busaccess, one for jmp
         self.u12_cond = Mux153("u12", trace=trace)
         self.u13_mode = Decoder138("u13", trace=trace)
         self.u14_instr = Decoder138("u14", trace=trace)
-
         # U15 octal inverter not represented. See comments later.
         # U16 quad or not represented. See comments later.
 
@@ -451,6 +453,7 @@ class Board(Trace):
 
     def step(self):
         self.clock1_l()
+        self.instr_decode()
         self.clock1_h()
         self.clock2_l()
         self.clock2_h()
@@ -460,9 +463,9 @@ class Board(Trace):
         if self.WEx == 0:
             self.u36_ram.store(self.A[0:15], self.BUS)
 
-        self.rom_u7.fetch(self.PC)
-        self.u8_ir.inputs(D=self.rom_u7.D[0:8])
-        self.u9_d.inputs(D=self.rom_u7.D[8:16])
+        self.u7_rom.fetch(self.PC)
+        self.u8_ir.inputs(D=self.u7_rom.D[0:8])
+        self.u9_d.inputs(D=self.u7_rom.D[8:16])
 
         self.u8_ir.clock()
         self.u9_d.clock()
@@ -470,6 +473,7 @@ class Board(Trace):
         self.IR = self.u8_ir.Q
         self.D = self.u9_d.Q
 
+    def instr_decode(self):
         # logic based on IR/D
         self.u11_busjmp.inputs(Aa=self.IR[0:2], Ab=self.IR[2:4])
         self.DEx, self.OEx, self.AEx, self.IEx = self.u11_busjmp.Oa
@@ -550,9 +554,13 @@ def test():
     fn = 'ROMv6.rom'
     rom = open(fn, 'rb').read()
 
-    trace = ['PC']
+    trace = [
+        'board:PC',
+        #'u3:COUNT',
+        #'HOLD', 'COUNT', 'LOAD',
+    ]
     m = Board("board", rom, trace=trace)
-    m.watch(True, PCLO="hex:PC[0:8]", WE="WEx")
+    #m.watch(True, PCLO="hex:PC[0:8]", WE="WEx")
     #m.watch(False, PCLO="hex:PC[0:8]", WE="WEx")
     for _ in range(10):
         m.step()
