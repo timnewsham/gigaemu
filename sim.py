@@ -97,6 +97,25 @@ class Rom(Trace):
         self.trace("FETCH", f"addr={naddr:04x} low={l:02x} hi={h:02x}")
         return num_bits(8, l) + num_bits(8, h)
 
+class Decoder138(Trace):
+    """
+    74HCT138 is a 3:8 decoder with active-low outputs.
+    E1, E2 are active low enables, and E3 is active high.
+    """
+    def __init__(self, name, trace=None):
+        Trace.__init__(self, name, trace)
+
+    def inputs(self, A=(0,0,0), E1=0, E2=0, E3=1):
+        self.A = A
+        self.E1 = E1
+        self.E2 = E2
+        self.E3 = E3
+
+        if (E1, E2, E3) == (0, 0, 1):
+            self.O = bit_invs(*decode(*self.A))
+        else:
+            self.O = (1,1,1,1,1,1,1,1)
+
 class Decoder139(Trace):
     """
     74HCT139 is a 2:4 decoder with active-low outputs.
@@ -112,6 +131,60 @@ class Decoder139(Trace):
             self.O = bit_invs(*decode(*self.A))
         else:
             self.O = (1,1,1,1)
+
+class Mux153(Trace):
+    """
+    74HCT153 is a dual 4:1 mux.
+    Ea, Eb are active low enables.
+    """
+    def __init__(self, name, trace=None):
+        Trace.__init__(self, name, trace)
+
+    def inputs(self, Ia=(0,0,0), Ea=0, Ib=(0,0,0), Eb=0, S=(0,0)):
+        self.Ia, self.Ea = Ia, Ea
+        self.Ib, self.Eb = Ib, Eb
+        self.S = S
+
+        if Ea == 0:
+            self.Za = mux(*self.Ia)
+        else:
+            self.Za = 0
+
+        if Eb == 0:
+            self.Zb = mux(*self.Ib)
+        else:
+            self.Zb = 0
+
+class DiodeMatrix(Trace):
+    """
+    Diode matrix implements wired-nor (or wired-nand for active-low) logic
+    with a matrix of diodes.
+    The input provides the rows, and the outputs the columns.
+    A column is 0 if any of the connected rows are 0, otherwise it is pulled up to 1.
+    """
+    def __init__(self, name, rows, trace=None):
+        assert len(rows) > 0
+        self.matrix = rows
+        self.nrows = len(rows)
+        self.ncols = len(rows[0])
+        assert all(len(row) == self.ncols for row in rows)
+        Trace.__init__(self, name, trace)
+
+        # we could pre-compute a function for each column for speed.
+
+    def inputs(self, I):
+        assert len(I) == self.nrows
+        self.I = I
+
+        # this could be a complicated one-liner with loss of clarity
+        colvals = []
+        for col in range(self.ncols):
+            colval = 1 # pull-up
+            for row in range(self.rows):
+                if I[row] == 0 and self.matrix[row][col] == 1:
+                    colval = 0 # grounded through diode
+            colvals.append(colval)
+        self.O = tuple(colvals)
 
 class Counter161(Trace):
     """
@@ -191,8 +264,39 @@ class Board(Trace):
 
         # U10 tri-state buffer not simulated directly.
 
+        # instruction decode logic
         trace = None
         self.u11_busaccess = Decoder139("u11", trace=trace)
+        self.u12_cond = Mux153("u12", trace=trace)
+        self.u13_mode = Decoder138("u13", trace=trace)
+        self.u14_instr = Decoder138("u14", trace=trace)
+
+        self.diode_mode = DiodeMatrix("diode_mode", [
+            [1, 0, 0, 0],
+            [1, 0, 1, 0],
+            [1, 0, 0, 1],
+            [1, 0, 1, 1],
+
+            [0, 0, 0, 0],
+            [0, 0, 0, 0],
+            [0, 1, 0, 0],
+            [0, 1, 1, 1],
+            ], trace=trace)
+
+        self.diode_isntr = DiodeMatrix("diode_instr", [
+            # schematic suggests this diode can be skipped if just using
+            # diodes on first column for LD, AND, OR, XOR.
+            [1, 0, 0, 0, 0], # IR7
+
+            [0, 0, 0, 1, 1], # LD
+            [0, 0, 0, 0, 1], # AND
+            [0, 0, 1, 1, 1], # OR
+            [0, 0, 1, 1, 0], # XOR
+            [0, 0, 0, 1, 1], # ADD
+            [0, 1, 1, 0, 0], # SUB
+            [0, 0, 0, 0, 0], # ST
+            [1, 1, 0, 1, 0], # Bcc
+            ], trace=trace)
 
         # bootstrap values needed before they are updated...
         self.PC = self.u3_pc03.Q + self.u4_pc47.Q + self.u5_pc811.Q + self.u6_pc1215.Q
@@ -223,10 +327,8 @@ class Board(Trace):
         self.DEx, self.OEx, self.AEx, self.IEx = self.u11_busaccess.O
 
         # tracing...
-        pc = bit_num(*self.PC)
-        ir = bit_num(*self.IR)
-        d = bit_num(*self.D)
-        self.trace("PC", f"pc={pc:04x} ir={ir:02x} d={d:02x}")
+        n = lambda x : bit_num(*x)
+        self.trace("PC", f"pc={n(self.PC):04x} ir={n(self.IR):02x} d={n(self.D):02x}")
         self.trace("BUS", f"DEx={self.DEx} OEx={self.OEx} AEx={self.AEx} IEx={self.IEx}")
 
     def clock1_h(self):
