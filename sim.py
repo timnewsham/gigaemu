@@ -361,7 +361,7 @@ class Counter161(Trace):
 
     def clock(self):
         if not self.Pe: # load
-            self.trace("LOAD", f"P={P}")
+            self.trace("LOAD", f"P={self.P}")
             self.q = self.P
         elif self.Cep and self.Cet: # count
             oldq = self.Q
@@ -588,14 +588,10 @@ class Gigatron(Trace):
         self.clock1_l()
         self.instr_decode()
         self.clock2_l()
+        self.clock1_l_post()
         self.watcher()
 
     def clock1_l(self):
-        # WEx is (Wx AND clock1) in schematic, but just Wx for us.
-        # we only evalute it in clock1_l, triggering ram store when low.
-        if self.WEx == 0:
-            self.u36_ram.store(self.A[0:15], self.BUS)
-
         last_pc = self.PC
 
         self.u3_pc03.inputs(Pe=self.PLx, P=self.BUS[0:4])
@@ -667,7 +663,7 @@ class Gigatron(Trace):
         self.A = self.u34_addr.Z + self.u35_addr.Z + self.u32_addr.Z + self.u33_addr.Z
 
         # ram, D might need to appear on bus before ALU logic and clock2_l
-        self.update_bus()
+        self.update_bus(True)
 
         self.u21_alulogic.inputs(Ia=self.AR, Ib=(0,1,0,1), S=(self.AC[0], self.BUS[0]), Ea=0, Eb=self.ALx)
         self.u22_alulogic.inputs(Ia=self.AR, Ib=(0,1,0,1), S=(self.AC[1], self.BUS[1]), Ea=0, Eb=self.ALx)
@@ -732,16 +728,31 @@ class Gigatron(Trace):
         if old_out6 == 1 and out6 == 0:
             self.clock_out6_l()
 
-        # AC, IN might need to appear on the bus
-        self.update_bus()
+    def clock1_l_post(self):
+        # Note: this really happens in clock1_l of the next instruction,
+        # but I want to account for it in the current execution step when simulating.
 
-    def update_bus(self):
+        # AC, IN might need to appear on the bus
+        self.update_bus(False)
+
+        # WEx is (Wx AND clock1) in schematic, but just Wx for us.
+        # we only evalute it in clock1_l, triggering ram store when low.
+        if self.WEx == 0:
+            self.u36_ram.store(self.A[0:15], self.BUS)
+            n = lambda x : bit_num(*x)
+            self.trace("RAM", f"STORE {n(self.BUS):02x} to {n(self.A):04x}")
+
+
+    def update_bus(self, show_ram):
         # Simulate the tri-state bus. This isn't clocked but change after registers change.
         assert self.DEx + self.OEx + self.AEx + self.IEx == 3 # three will be false (one) and one will be true (zero).
         if self.DEx == 0:
             self.BUS = self.D
         elif self.OEx == 0:
             self.BUS = self.u36_ram.fetch(self.A[0:15])
+            if show_ram:
+                n = lambda x : bit_num(*x)
+                self.trace("RAM", f"FETCH {n(self.BUS):02x} from {n(self.A):04x}")
         elif self.AEx == 0:
             self.BUS = self.AC
         elif self.IEx == 0:
@@ -771,6 +782,9 @@ def test():
     trace = [
         "REG",
         "DECODE",
+        #"BUS",
+        #"u36:*", # RAM
+        "RAM"
         #"u27:*",
         #"ALU",
 
@@ -781,7 +795,7 @@ def test():
     m = Gigatron("board", rom, trace=trace)
     #m.watch(True, PCLO="hex:PC[0:8]", WE="WEx")
     #m.watch(False, PCLO="hex:PC[0:8]", WE="WEx")
-    for _ in range(10):
+    for _ in range(20):
         m.step()
 
 if __name__ == '__main__':
