@@ -355,11 +355,7 @@ class Counter161(Trace):
         self.Cet = Cet
         self.Pe = Pe
         self.P = P
-
-        if self.Cet and self.Q == (1,1,1,1):
-            self.TC = 1
-        else:
-            self.TC = 0
+        self.TC = bit(self.Cet and self.Q == (1,1,1,1))
         self.trace("IN", f"Cep={Cep} Cet={Cet} Pe={Pe} P={P} -> TC={self.TC}")
 
     def clock(self):
@@ -368,17 +364,13 @@ class Counter161(Trace):
             self.Q = self.P
         elif self.Cep and self.Cet: # count
             oldq = self.Q
+            old_tc = self.TC
             (b0,b1,b2,b3, c) = num_bits(5, bit_num(*self.Q) + 1)
             self.Q = b0,b1,b2,b3
-            self.trace("COUNT", f"Q={oldq} -> Q={self.Q}")
+            self.TC = bit(self.Cet and self.Q == (1,1,1,1))
+            self.trace("COUNT", f"Q={oldq} -> Q={self.Q}, TC={old_tc} -> TC={self.TC}")
         else:
-            self.trace("HOLD", f"Q={self.Q}")
-
-        # XXX duplicate this here after update?
-        if self.Cet and self.Q == (1,1,1,1):
-            self.TC = 1
-        else:
-            self.TC = 0
+            self.trace("HOLD", f"Q={self.Q}, TC={self.TC}")
 
 class Reg273(Trace):
     """
