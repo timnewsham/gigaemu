@@ -37,6 +37,7 @@ def run(*instrs, trace=None):
     rinstrs += nop
     for instr in instrs:
         rinstrs += instr
+    #print(rinstrs)
 
     rom = [0] * 2 * 64 * 1024
     ninstrs = len(rinstrs)>>1
@@ -48,8 +49,8 @@ def run(*instrs, trace=None):
         m.step()
     return m, ninstrs
 
-def test_nop():
-    m,cnt = run(nop)
+def test_nop(trace=None):
+    m,cnt = run(nop, trace=trace)
     assert n(m.exec_pc) == cnt
     assert n(m.PC) == cnt + 1
     assert n(m.AC) == 0
@@ -58,16 +59,16 @@ def test_nop():
     assert n(m.OUT) == 0
 
 def test_ld_acc_val(val, trace=None):
-    m, cnt = run(instr(LD, D_AC, DATA, val), nop, trace=trace)
+    m, cnt = run(instr(LD, D_AC, DATA, val), trace=trace)
     assert n(m.AC) == val
 def test_ld_x_val(val, trace=None):
-    m, cnt = run(instr(LD, D_X, DATA, val), nop, trace=trace)
+    m, cnt = run(instr(LD, D_X, DATA, val), trace=trace)
     assert n(m.X) == val
 def test_ld_y_val(val, trace=None):
-    m, cnt = run(instr(LD, D_Y, DATA, val), nop, trace=trace)
+    m, cnt = run(instr(LD, D_Y, DATA, val), trace=trace)
     assert n(m.Y) == val
 def test_ld_out_val(val, trace=None):
-    m, cnt = run(instr(LD, D_OUT, DATA, val), nop, trace=trace)
+    m, cnt = run(instr(LD, D_OUT, DATA, val), trace=trace)
     assert n(m.OUT) == val
 
 def test_ld_reg(trace=None):
@@ -77,11 +78,58 @@ def test_ld_reg(trace=None):
         test_ld_y_val(val, trace=trace)
         test_ld_out_val(val, trace=trace)
 
+def test_st_zp_addrval(addr, val, trace=None):
+    m,cnt = run(
+        instr(LD, D_AC, DATA, val),
+        instr(ST, D_AC, AC, addr),
+        instr(LD, D_AC, DATA, 0),
+        instr(LD, D_AC, RAM, addr),
+        trace = trace)
+    assert n(m.AC) == val
+
+def test_st_zp(trace=None):
+    addr = 0x11
+    for val in range(256):
+        test_st_zp_addrval(addr, val, trace=trace)
+
+def test_aluop_ab(op, a, b, expect, trace=None):
+    m,cnt = run(
+        instr(LD, D_AC, DATA, a),
+        instr(op, D_AC, DATA, b),
+        trace=trace)
+    assert n(m.AC) == expect
+
+def test_aluop(trace=None):
+    test_aluop_ab(AND, 0x11, 0x0f, 0x01, trace=trace)
+    test_aluop_ab(AND, 0xf0, 0xff, 0xf0, trace=trace)
+    test_aluop_ab(OR, 0x11, 0x0f, 0x1f, trace=trace)
+    test_aluop_ab(OR, 0xf0, 0x0c, 0xfc, trace=trace)
+    test_aluop_ab(XOR, 0x11, 0x0f, 0x1e, trace=trace)
+    test_aluop_ab(XOR, 0xf0, 0x0c, 0xfc, trace=trace)
+    test_aluop_ab(ADD, 0xff, 0x01, 0x00, trace=trace)
+    test_aluop_ab(ADD, 0x01, 0xff, 0x00, trace=trace)
+    test_aluop_ab(ADD, 20, 33, 53, trace=trace)
+    test_aluop_ab(ADD, 33, 256-20, 13, trace=trace)
+    test_aluop_ab(SUB, 20, 33, 256-13, trace=trace)
+    test_aluop_ab(SUB, 20, 3, 17, trace=trace)
+    test_aluop_ab(SUB, 0, 1, 0xff, trace=trace)
+
 def test():
     trace=None
-    #trace = ["REG", "DECODE"]
-
-    #test_nop()
+    test_nop(trace=trace)
     test_ld_reg(trace=trace)
+    test_st_zp(trace=trace)
+    test_aluop(trace=trace)
 
-test()
+    # TODO: load addressing modes
+    # TODO: store addressing modes
+    # TODO: Bcc, addressing modes
+    # TODO: long jump, addressing modes
+
+def fixme():
+    trace = ["REG", "DECODE"]
+    pass
+
+if __name__ == '__main__':
+    test()
+    fixme()
