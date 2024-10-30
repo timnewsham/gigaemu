@@ -633,9 +633,6 @@ class Gigatron(Trace):
         self.Wx = self.u14_instr.O[6]
         self.W = bit_inv(self.Wx) # U15 1 of 8.
 
-        ia = self.IR[2:5] + (0,)
-        sel = (self.AC[7], self.CO)
-        self.u12_cond.inputs(Ia=ia, Ib=(1,1,1,1), S=sel, Ea=self.u14_instr.O[7]) # after u14 updated
         self.u13_mode.inputs(A=self.IR[2:5], E3=self.u14_instr.O[7]) # after u14 updated
         self.XLx = self.u13_mode.O[4]
         self.YLx = self.u13_mode.O[5]
@@ -652,11 +649,6 @@ class Gigatron(Trace):
 
         self.ALx = bit_inv(self.diode_instr.O[0])    # after diode_instr updated, U15 1 of 8.
         self.AR = bit_invs(*self.diode_instr.O[1:5]) # after diode_instr updated, U15 5 of 8.
-
-        phx = bit_or(self.u14_instr.O[7], self.BFx) # after u11/u14 updated, U16 1 of 4.
-        self.PHx = phx
-        cond = self.u12_cond.Za
-        self.PLx = bit_and(bit_inv(cond), phx) # inv from U15 1 of 8, AND implemented with diodes and pull-up.
 
         # Note: I "rewired" these to keep the input lines in-order.
         # The schematic has some lines out of order on these muxes for routing reasons.
@@ -693,6 +685,13 @@ class Gigatron(Trace):
         self.ALU = self.u26_aluadd.S + self.u25_aluadd.S
         self.CO = self.u25_aluadd.C4
         self.trace("ALU", f"AR={self.AR} AC={self.AC} BUS={self.BUS} A={self.ADDR_A} B={self.ADDR_B} C={self.AR[0]} S={self.ALU} CO={self.CO}")
+
+        ia = self.IR[2:5] + (0,)
+        sel = (self.AC[7], self.CO) # after ALU AC7 and CO are updated.
+        self.u12_cond.inputs(Ia=ia, Ib=(1,1,1,1), S=sel, Ea=self.u14_instr.O[7]) # after u14 updated.
+        self.PHx = bit_or(self.u14_instr.O[7], self.BFx) # after u11/u14 updated, U16 1 of 4.
+        cond = self.u12_cond.Za
+        self.PLx = bit_and(bit_inv(cond), self.PHx) # inv from U15 1 of 8, AND implemented with diodes and pull-up.
 
         # WEx comes from bit_or(CLK1, Wx), but we don't have explicit clock signals.
         # it will latch RAM when Wx is true (0) and CLK1 goes low.

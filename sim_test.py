@@ -114,12 +114,57 @@ def test_aluop(trace=None):
     test_aluop_ab(SUB, 20, 3, 17, trace=trace)
     test_aluop_ab(SUB, 0, 1, 0xff, trace=trace)
 
+def test_branch_cond(val, cond, taken, trace=None):
+    targ = 0x8f
+    ldval = 0x99
+    m,cnt = run(
+        instr(LD, D_AC, DATA, val),
+        instr(Bcc, cond, DATA, targ),
+        instr(LD, D_AC, DATA, ldval),
+        trace=trace)
+    assert n(m.AC) == ldval
+    assert n(m.exec_pc) == cnt
+    if taken:
+        assert n(m.PC) == targ
+    else:
+        assert n(m.PC) == cnt+1
+
+def test_branch(trace=None):
+    test_branch_cond(0x0f, GT, True, trace=trace)
+    test_branch_cond(0x00, GT, False, trace=trace)
+    test_branch_cond(0xf0, GT, False, trace=trace)
+
+    test_branch_cond(0x0f, LT, False, trace=trace)
+    test_branch_cond(0x00, LT, False, trace=trace)
+    test_branch_cond(0xf0, LT, True, trace=trace)
+
+    test_branch_cond(0x0f, NE, True, trace=trace)
+    test_branch_cond(0x00, NE, False, trace=trace)
+    test_branch_cond(0xf0, NE, True, trace=trace)
+
+    test_branch_cond(0x0f, EQ, False, trace=trace)
+    test_branch_cond(0x00, EQ, True, trace=trace)
+    test_branch_cond(0xf0, EQ, False, trace=trace)
+
+    test_branch_cond(0x0f, GE, True, trace=trace)
+    test_branch_cond(0x00, GE, True, trace=trace)
+    test_branch_cond(0xf0, GE, False, trace=trace)
+
+    test_branch_cond(0x0f, LE, False, trace=trace)
+    test_branch_cond(0x00, LE, True, trace=trace)
+    test_branch_cond(0xf0, LE, True, trace=trace)
+
+    test_branch_cond(0x0f, BRA, True, trace=trace)
+    test_branch_cond(0x00, BRA, True, trace=trace)
+    test_branch_cond(0xf0, BRA, True, trace=trace)
+
 def test():
     trace=None
     test_nop(trace=trace)
     test_ld_reg(trace=trace)
     test_st_zp(trace=trace)
     test_aluop(trace=trace)
+    test_branch(trace=trace)
 
     # TODO: load addressing modes
     # TODO: store addressing modes
@@ -127,7 +172,10 @@ def test():
     # TODO: long jump, addressing modes
 
 def fixme():
-    trace = ["REG", "DECODE"]
+    trace = ["REG", "DECODE",
+        "u3:*", "u4:*", "u5:*", "u6:*", # PC reg
+    ]
+
     pass
 
 if __name__ == '__main__':
