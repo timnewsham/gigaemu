@@ -333,7 +333,7 @@ class Mux157(Trace):
         self.E = E
         self.S = S
 
-        if self.E:
+        if self.E == 0:
             self.Z = mux(self.S, self.Ia, self.Ib)
         else:
             self.Z = (0,0,0,0)
@@ -652,11 +652,13 @@ class Gigatron(Trace):
 
         # Note: I "rewired" these to keep the input lines in-order.
         # The schematic has some lines out of order on these muxes for routing reasons.
-        self.u34_addr.inputs(Ia=self.X[0:4], Ib=self.D[0:4], S=self.EL)
-        self.u35_addr.inputs(Ia=self.X[4:8], Ib=self.D[4:8], S=self.EL)
+        self.u34_addr.inputs(Ia=self.X[0:4], Ib=self.D[0:4], S=self.EL, E=0)
+        self.u35_addr.inputs(Ia=self.X[4:8], Ib=self.D[4:8], S=self.EL, E=0)
         self.u32_addr.inputs(Ia=self.Y[0:4], Ib=(1,1,1,1), S=0, E=self.EH)
         self.u33_addr.inputs(Ia=self.Y[4:8], Ib=(1,1,1,1), S=0, E=self.EH)
         self.A = self.u34_addr.Z + self.u35_addr.Z + self.u32_addr.Z + self.u33_addr.Z
+        n = lambda x : bit_num(*x)
+        self.trace("ADDR", f"EL={self.EL} EH={self.EH} X={n(self.X):02x} Y={n(self.Y):02x} D={n(self.D):02x} -> A={n(self.A):04x}")
 
         # ram, D might need to appear on bus before ALU logic and clock2_l
         self.update_bus(True)

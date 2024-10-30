@@ -114,13 +114,26 @@ def test_aluop(trace=None):
     test_aluop_ab(SUB, 20, 3, 17, trace=trace)
     test_aluop_ab(SUB, 0, 1, 0xff, trace=trace)
 
+def test_longjump(trace=None):
+    targhi = 0x11
+    targlo = 0x8f
+    ldval = 0xec
+    m,cnt = run(
+        instr(LD, D_Y, DATA, targhi),
+        instr(Bcc, JMP, DATA, targlo),
+        instr(LD, D_AC, DATA, ldval), # delay slot
+        trace=trace)
+    assert n(m.AC) == ldval
+    assert n(m.exec_pc) == cnt
+    assert n(m.PC) == (targhi << 8) | targlo
+
 def test_branch_cond(val, cond, taken, trace=None):
     targ = 0x8f
     ldval = 0x99
     m,cnt = run(
         instr(LD, D_AC, DATA, val),
         instr(Bcc, cond, DATA, targ),
-        instr(LD, D_AC, DATA, ldval),
+        instr(LD, D_AC, DATA, ldval), # delay slot
         trace=trace)
     assert n(m.AC) == ldval
     assert n(m.exec_pc) == cnt
@@ -158,6 +171,42 @@ def test_branch(trace=None):
     test_branch_cond(0x00, BRA, True, trace=trace)
     test_branch_cond(0xf0, BRA, True, trace=trace)
 
+def test_st_mode(mode, base_addr=0x11, acval=0x22, xval=0x33, yval=0x44, expected_addr=None, expected_xval=None, expected_yval=None, trace=None):
+    if expected_xval is None:
+        expected_xval = xval
+    if expected_yval is None:
+        expected_yval = yval
+
+    m,cnt = run(
+        instr(LD, D_AC, DATA, acval),
+        instr(LD, D_X, DATA, xval),
+        instr(LD, D_Y, DATA, yval),
+        instr(ST, mode, AC, base_addr),
+        trace=trace)
+
+    ram_val = m.u36_ram.fetch(num_bits(15, expected_addr))
+    #print(f"{expected_addr:04x}: {n(ram_val):02x}, X={n(m.X):02x} Y={n(m.Y):02x}")
+    assert n(ram_val) == acval
+    assert n(m.X) == expected_xval
+    assert n(m.Y) == expected_yval
+
+def test_st_modes(trace=None):
+    lohi = lambda l,h : (h << 8) | l
+
+    test_st_mode(D_AC, base_addr=0x99, expected_addr=0x99, trace=trace)
+    test_st_mode(X_AC, xval=0x99, expected_addr=0x99, trace=trace)
+    test_st_mode(YD_AC, base_addr=0x88, yval=0x99, expected_addr=lohi(0x88, 0x99), trace=trace)
+    test_st_mode(YX_AC, xval=0x88, yval=0x99, expected_addr=lohi(0x88, 0x99), trace=trace)
+
+    # These are weirdos.. they store acval into both ram and the target (X or Y) register.
+    test_st_mode(D_X, acval=0xaa, base_addr=0x88, xval=0x99, expected_addr=0x88, expected_xval=0xaa, trace=trace)
+    test_st_mode(D_Y, acval=0xaa, base_addr=0x88, yval=0x99, expected_addr=0x88, expected_yval=0xaa, trace=trace)
+
+    test_st_mode(D_OUT, base_addr=0x99, expected_addr=0x99, trace=trace)
+
+    # This one increments X.
+    test_st_mode(YXpp_OUT, xval=0x88, yval=0x99, expected_addr=lohi(0x88, 0x99), expected_xval=0x89, trace=trace)
+
 def test():
     trace=None
     test_nop(trace=trace)
@@ -165,17 +214,22 @@ def test():
     test_st_zp(trace=trace)
     test_aluop(trace=trace)
     test_branch(trace=trace)
+    test_longjump(trace=trace)
+    test_st_modes(trace=trace)
 
+    # TODO: test bus modes
     # TODO: load addressing modes
-    # TODO: store addressing modes
     # TODO: Bcc, addressing modes
     # TODO: long jump, addressing modes
 
 def fixme():
-    trace = ["REG", "DECODE",
-        "u3:*", "u4:*", "u5:*", "u6:*", # PC reg
+    trace = [
+        "REG",
+        "DECODE",
+        "ADDR",
+        "RAM",
+        #"u3:*", "u4:*", "u5:*", "u6:*", # PC reg
     ]
-
     pass
 
 if __name__ == '__main__':
