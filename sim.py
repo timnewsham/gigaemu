@@ -256,6 +256,7 @@ class Decoder138(Trace):
         Trace.__init__(self, name, trace)
 
     def inputs(self, A=(0,0,0), E1=0, E2=0, E3=1):
+        assert len(A) == 3
         self.A = A
         self.E1 = E1
         self.E2 = E2
@@ -294,7 +295,10 @@ class Mux153(Trace):
     def __init__(self, name, trace=None):
         Trace.__init__(self, name, trace)
 
-    def inputs(self, Ia=(0,0,0), Ea=0, Ib=(0,0,0), Eb=0, S=(0,0)):
+    def inputs(self, Ia=(0,0,0,0), Ea=0, Ib=(0,0,0,0), Eb=0, S=(0,0)):
+        assert len(Ia) == 4
+        assert len(Ib) == 4
+        assert len(S) == 2
         self.Ia, self.Ea = Ia, Ea
         self.Ib, self.Eb = Ib, Eb
         self.S = S
@@ -380,6 +384,66 @@ class Reg273(Trace):
         self.trace("LOAD", f"Q={self.Q} -> Q={self.D}")
         self.Q = self.D
 
+class Adder283(Trace):
+    """
+    74HCT283 is a 4-bit adder.
+    """
+    def __init__(self, name, trace=None):
+        Trace.__init__(self, name, trace)
+
+    def inputs(self, A=(0,0,0,0), B=(0,0,0,0), CO=0):
+        assert len(A) == 4
+        assert len(B) == 4
+        a = bit_num(*A)
+        b = bit_num(*B)
+        sum = num_bits(5, a+b+CO)
+        self.S = sum[0:4]
+        self.C4 = sum[4]
+        self.trace("ADD", f"A={A} B={B} CO={CO} -> S={self.S} C4={self.C4}")
+
+class Reg377(Trace):
+    """
+    74HCT377 is an 8-bit register with enable.
+    """
+    def __init__(self, name, trace=None):
+        Trace.__init__(self, name, trace)
+        self.Q = (0,0,0,0,0,0,0,0)
+
+    def inputs(self, D=(0,0,0,0,0,0,0,0), EO=0):
+        assert len(D) == 8
+        self.D = D
+        self.EO = EO
+        self.trace("IN", f"D={D} EO={EO}")
+
+    def clock(self):
+        if self.EO == 0:
+            self.trace("LOAD", f"Q={self.Q} -> Q={self.D}")
+            self.Q = self.D
+        else:
+            self.trace("HOLD", f"Q={self.Q}")
+
+class Shift595(Trace):
+    """
+    74HCT595 is an 8-bit shift register with output enable, clear,
+    serial clock, read clock and clear.
+    Clear and enables not implemented.
+    Assumes both clocks are tied together as in the gigatron.
+    """
+    def __init__(self, name, trace=None):
+        Trace.__init__(self, name, trace)
+        self.SR = (0,0,0,0,0,0,0,0)
+        self.Q = (0,0,0,0,0,0,0,0)
+
+    def inputs(self, SER=0):
+        self.SER = SER
+        self.trace("IN", f"SER={SER}")
+
+    def clock(self):
+        oldq, oldsr = self.Q, self.SR
+        # latches old SR before shifting in SER in.
+        self.Q = self.SR
+        self.SR = (self.SER,) + self.SR[0:7]
+        self.trace("SHIFT", f"Q={oldq} -> Q={self.Q}, SR={oldsr} -> SR={self.SR}")
 
 # board section
 
@@ -387,7 +451,10 @@ class Board(Trace):
     def __init__(self, name, rom, trace=None):
         Trace.__init__(self, name, trace)
 
-        # U1 clock and U2 reset not simulated directly.
+        self.serial_input = 0
+
+        # U1 clock not explicit.
+        # U2 reset not simulated.
         self.u3_pc03 = Counter161("u3", trace=trace)
         self.u4_pc47 = Counter161("u4", trace=trace)
         self.u5_pc811 = Counter161("u5", trace=trace)
@@ -430,33 +497,79 @@ class Board(Trace):
             [1, 1, 0, 1, 0], # Bcc
             ], trace=trace)
 
+        self.u17_alulogic = Mux153("u17", trace=trace)
+        self.u18_alulogic = Mux153("u18", trace=trace)
+        self.u19_alulogic = Mux153("u19", trace=trace)
+        self.u20_alulogic = Mux153("u20", trace=trace)
+        self.u21_alulogic = Mux153("u21", trace=trace)
+        self.u22_alulogic = Mux153("u22", trace=trace)
+        self.u23_alulogic = Mux153("u23", trace=trace)
+        self.u24_alulogic = Mux153("u24", trace=trace)
+        self.u25_aluadd = Adder283("u25", trace=trace)
+        self.u26_aluadd = Adder283("u26", trace=trace)
+        self.u27_regac = Reg377("u27", trace=trace)
+        # U28 tri-state buffer not simulated directly.
+        self.u29_regx = Counter161("u29", trace=trace)
+        self.u30_regx = Counter161("u30", trace=trace)
+        self.u31_regy = Reg377("u31", trace=trace)
         self.u32_addr = Mux157("u32", trace=trace)
         self.u33_addr = Mux157("u33", trace=trace)
         self.u34_addr = Mux157("u34", trace=trace)
         self.u35_addr = Mux157("u35", trace=trace)
         self.u36_ram = Ram("u36", trace=trace)
+        self.u37_regout = Reg377("u37", trace=trace)
+        self.u38_extout = Reg273("u38", trace=trace)
+        self.u39_inp = Shift595("u39", trace=trace)
 
-
-        # bootstrap values needed before they are updated...
-        self.PC = self.u3_pc03.Q + self.u4_pc47.Q + self.u5_pc811.Q + self.u6_pc1215.Q
-        assert len(self.PC) == 16
-        self.AC = (0,0,0,0,0,0,0,0)
+        # give values to all signals to inert values
+        # clock_l:
+        self.IR = (0,0,0,0,0,0,0,0)
+        self.D = (0,0,0,0,0,0,0,0)
+        # updated in instr_decode:
+        self.DEx = 1
+        self.BFx = 1
+        self.Wx = 1
+        self.W = 0
+        self.XLx = 1
+        self.YLx = 1
+        self.IX = 0
+        self.EL = 0
+        self.EH = 0
+        self.LDx = 1
+        self.OLx = 1
+        self.AL = 0
+        self.AR = (0,0,0,0)
+        self.PHx = 1
+        self.PLx = 1
+        self.A = (0,0,0,0,0,0,0,0)
+        self.ADDR_A = (0,0,0,0,0,0,0,0)
+        self.ADDR_B = (0,0,0,0,0,0,0,0)
+        self.ALU = (0,0,0,0,0,0,0,0)
         self.CO = 0
         self.WEx = 1
-        self.A = (0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0)
+        # updated in clock1_h
+        self.PC = (0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0)
+        # updated in clock2_l
+        self.AC = (0,0,0,0,0,0,0,0)
+        self.X = (0,0,0,0,0,0,0,0)
+        self.Y = (0,0,0,0,0,0,0,0)
+        self.OUT = (0,0,0,0,0,0,0,0)
+        self.RGB = (0,0,0)
+        self.HSYNCx = 0
+        self.VSYNCx = 0
+        self.SER_PULSE = 0
+        self.SER_LATCH = 0
         self.BUS = (0,0,0,0,0,0,0,0)
-
-        # XXX
-        self.PL = 1
-        self.PH = 1
-        self.Y = (1,1,0,0,1,1,0,0)
+        # updated in clock_out6_l
+        self.LED = (0,0,0,0)
+        self.AUDIO = (0,0,0,0)
+        self.IN = (0,0,0,0,0,0,0,0)
 
     def step(self):
         self.clock1_l()
         self.instr_decode()
         self.clock1_h()
         self.clock2_l()
-        self.clock2_h()
         self.watcher()
 
     def clock1_l(self):
@@ -483,12 +596,12 @@ class Board(Trace):
         self.Wx = self.u14_instr.O[6]
         self.W = bit_inv(self.Wx) # U15 1 of 8.
 
-        ia = self.IR[2:4] + (0,)
+        ia = self.IR[2:5] + (0,)
         sel = (self.AC[7], self.CO)
         self.u12_cond.inputs(Ia=ia, Ib=(1,1,1,1), S=sel, Ea=self.u14_instr.O[7]) # after u14 updated
         self.u13_mode.inputs(A=self.IR[2:5], E3=self.u14_instr.O[7]) # after u14 updated
-        self.XL = self.u13_mode.O[4]
-        self.YL = self.u13_mode.O[5]
+        self.XLx = self.u13_mode.O[4]
+        self.YLx = self.u13_mode.O[5]
         self.IX = bit_inv(self.u13_mode.O[7]) # U15 1 of 8
 
         self.diode_mode.inputs(self.u13_mode.O) # after u13 updated
@@ -500,16 +613,48 @@ class Board(Trace):
         inp = (self.IR[7],) + self.u14_instr.O
         self.diode_instr.inputs(inp) # after u14 updated
         self.AL = bit_inv(self.diode_instr.O[0])    # after diode_instr updated, U15 1 of 8.
-        self.AR = bit_invs(self.diode_instr.O[1:5]) # after diode_instr updated, U15 5 of 8.
+        self.AR = bit_invs(*self.diode_instr.O[1:5]) # after diode_instr updated, U15 5 of 8.
 
         phx = bit_or(self.u14_instr.O[7], self.u11_busjmp.Ob[0]) # after u11/u14 updated, U16 1 of 4.
         self.PHx = phx
         self.PLx = bit_and(bit_inv(self.u12_cond.Za), phx) # inv from U15 1 of 8, AND implemented with diodes and pull-up.
 
+        # Note: I "rewired" these to keep the input lines in-order.
+        # The schematic has some lines out of order on these muxes for routing reasons.
+        self.u34_addr.inputs(Ia=self.X[0:4], Ib=self.D[0:4], S=self.EL)
+        self.u35_addr.inputs(Ia=self.X[4:8], Ib=self.D[4:8], S=self.EL)
+        self.u32_addr.inputs(Ia=self.Y[0:4], Ib=(1,1,1,1), S=0, E=self.EH)
+        self.u33_addr.inputs(Ia=self.Y[4:8], Ib=(1,1,1,1), S=0, E=self.EH)
+        self.A = self.u34_addr.Z + self.u35_addr.Z + self.u32_addr.Z + self.u33_addr.Z
+
+        self.u21_alulogic.inputs(Ia=self.AR, Ib=(0,1,0,1), S=(self.AC[0], self.BUS[0]), Ea=0, Eb=self.AL)
+        self.u22_alulogic.inputs(Ia=self.AR, Ib=(0,1,0,1), S=(self.AC[1], self.BUS[1]), Ea=0, Eb=self.AL)
+        self.u23_alulogic.inputs(Ia=self.AR, Ib=(0,1,0,1), S=(self.AC[2], self.BUS[2]), Ea=0, Eb=self.AL)
+        self.u24_alulogic.inputs(Ia=self.AR, Ib=(0,1,0,1), S=(self.AC[3], self.BUS[3]), Ea=0, Eb=self.AL)
+        # I "rewired" the Ia and Ib lines on the next four to keep them in AR bit order.
+        # The schematic juggles (AR0,AR2,AR1,AR3), swaps S bits, and swaps Ia and Ib, swaps Ea and Eb.
+        self.u17_alulogic.inputs(Ib=self.AR, Ia=(0,1,0,1), S=(self.AC[4], self.BUS[4]), Ea=0, Eb=self.AL)
+        self.u18_alulogic.inputs(Ib=self.AR, Ia=(0,1,0,1), S=(self.AC[5], self.BUS[5]), Ea=0, Eb=self.AL)
+        self.u19_alulogic.inputs(Ib=self.AR, Ia=(0,1,0,1), S=(self.AC[6], self.BUS[6]), Ea=0, Eb=self.AL)
+        self.u20_alulogic.inputs(Ib=self.AR, Ia=(0,1,0,1), S=(self.AC[7], self.BUS[7]), Ea=0, Eb=self.AL)
+
+        self.ADDR_A = (
+            self.u21_alulogic.Za, self.u21_alulogic.Za, self.u22_alulogic.Za, self.u23_alulogic.Za,
+            self.u17_alulogic.Za, self.u18_alulogic.Za, self.u19_alulogic.Za, self.u20_alulogic.Za,
+        )
+        self.ADDR_B = (
+            self.u21_alulogic.Za, self.u21_alulogic.Za, self.u22_alulogic.Za, self.u23_alulogic.Za,
+            self.u17_alulogic.Za, self.u18_alulogic.Za, self.u19_alulogic.Za, self.u20_alulogic.Za,
+        )
+        self.u26_aluadd.inputs(A=self.ADDR_A[0:4], B=self.ADDR_B[0:4], CO=self.AR[0])
+        self.u25_aluadd.inputs(A=self.ADDR_A[4:8], B=self.ADDR_B[4:8], CO=self.u26_aluadd.C4)
+        self.ALU = self.u26_aluadd.S + self.u25_aluadd.S
+        self.CO = self.u25_aluadd.C4
+
         # WEx comes from bit_or(CLK1, Wx), but we don't have explicit clock signals.
         # it will latch RAM when Wx is true (0) and CLK1 goes low.
         # This omits the U16 1 of 4 in the simulation.
-        self.WEx = self.Wx #
+        self.WEx = self.Wx
 
         # tracing...
         n = lambda x : bit_num(*x)
@@ -517,12 +662,10 @@ class Board(Trace):
         self.trace("BUS", f"DEx={self.DEx} OEx={self.OEx} AEx={self.AEx} IEx={self.IEx}")
 
     def clock1_h(self):
-        # XXX dummy values
-
-        self.u3_pc03.inputs(Pe=self.PL, P=self.BUS[0:4])
-        self.u4_pc47.inputs(Pe=self.PL, Cet=self.u3_pc03.TC, P=self.BUS[4:8])
-        self.u5_pc811.inputs(Pe=self.PH, Cep=self.PL, Cet=self.u4_pc47.TC, P=self.Y[0:4])
-        self.u6_pc1215.inputs(Pe=self.PH, Cep=self.PL, Cet=self.u5_pc811.TC, P=self.Y[4:8])
+        self.u3_pc03.inputs(Pe=self.PLx, P=self.BUS[0:4])
+        self.u4_pc47.inputs(Pe=self.PLx, Cet=self.u3_pc03.TC, P=self.BUS[4:8])
+        self.u5_pc811.inputs(Pe=self.PHx, Cep=self.PLx, Cet=self.u4_pc47.TC, P=self.Y[0:4])
+        self.u6_pc1215.inputs(Pe=self.PHx, Cep=self.PLx, Cet=self.u5_pc811.TC, P=self.Y[4:8])
 
         self.u3_pc03.clock()
         self.u4_pc47.clock()
@@ -533,20 +676,58 @@ class Board(Trace):
         assert len(self.PC) == 16
 
     def clock2_l(self):
-        # TODO: latch ALU output into AC
-        # TODO: latch ALU output into Y
-        # TODO: latch ALU output into OUT
+        self.u27_regac.inputs(D=self.ALU, EO=self.LDx)
+        self.u29_regx.inputs(P=self.ALU[0:4], Pe=self.XLx, Cep=self.IX, Cet=1)
+        self.u30_regx.inputs(P=self.ALU[4:8], Pe=self.XLx, Cep=self.IX, Cet=self.u29_regx.TC)
+        self.u31_regy.inputs(D=self.ALU, EO=self.YLx)
+        self.u37_regout.inputs(D=self.ALU, EO=self.YLx)
 
-        # pickup which enabled output goes to self.BUS
-        # D reg if DEx (clock1_l)
-        # RAM if OEx (clock1_l)
-        # AC if AEx (clock2_l)
-        # INPUT if IEx (??)
-        pass
+        self.u27_regac.clock()
+        self.u29_regx.clock()
+        self.u30_regx.clock()
+        self.u31_regy.clock()
+        self.u37_regout.clock()
 
-    def clock2_h(self):
-        # TODO: maybe load ALU into X, or increment X.
-        pass
+        old_out6 = self.OUT[6]
+
+        self.AC = self.u27_regac.Q
+        self.X = self.u29_regx.Q + self.u30_regx.Q
+        self.Y = self.u31_regy.Q
+        self.OUT = self.u37_regout.Q
+        self.RGB = bit_num(*self.OUT[0:2]), bit_num(*self.OUT[2:4]), bit_num(*self.OUT[4:6])
+        self.HSYNCx = self.OUT[6]
+        self.VSYNCx = self.OUT[7]
+        self.SER_PULSE = self.OUT[6]
+        self.SER_LATCH = self.OUT[7]
+
+        out6 = self.OUT[6]
+        if old_out6 == 1 and out6 == 0:
+            self.clock_out6_l()
+
+        # Simulate the tri-state bus. This isn't clocked but change after registers change.
+        assert self.DEx + self.OEx + self.AEx + self.IEx == 3 # three will be false (one) and one will be true (zero).
+        if self.DEx == 0:
+            self.BUS = self.D
+        elif self.OEx == 0:
+            self.BUS = self.u36_ram.fetch(self.A[0:15])
+        elif self.AEx == 0:
+            self.BUS = self.AC
+        elif self.IEx == 0:
+            self.BUS = self.IN
+        else:
+            self.BUS = None
+            assert False, "bus multiplexer error"
+
+    def clock_out6_l(self):
+        self.u38_extout.inputs(D=self.AC)
+        self.u39_inp.inputs(SER=self.serial_input)
+
+        self.u38_exout.clock()
+        self.u39_inp.clock()
+
+        self.LED = self.u38_extout.Q[0:4]
+        self.AUDIO = self.u38_extout.Q[4:8]
+        self.IN = self.u39_inp.Q
 
 def test():
     test_prims()
