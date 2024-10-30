@@ -279,7 +279,7 @@ class Decoder139(Trace):
 
     def inputs(self, Ea=0, Aa=(0,0), Eb=0, Ab=(0,0)):
         self.Aa, self.Ea = Aa, Ea
-        self.Ab, self.Eb = Aa, Eb
+        self.Ab, self.Eb = Ab, Eb
 
         if not Ea:
             self.Oa = bit_invs(*decode(*self.Aa))
@@ -349,20 +349,23 @@ class Counter161(Trace):
         self.Q = (0,0,0,0)
         self.TC = 0
 
-    def inputs(self, Cep=1, Cet=1, Pe=0, P=(0,0,0,0)):
+    def inputs(self, Cep=1, Cet=0, Pe=1, P=(0,0,0,0)):
         assert len(P) == 4
         self.Cep = Cep
         self.Cet = Cet
         self.Pe = Pe
         self.P = P
 
-        self.TC = bit(Cet and self.Q == (1,1,1,1))
+        if self.Cet and self.Q == (1,1,1,1):
+            self.TC = 1
+        else:
+            self.TC = 0
         self.trace("IN", f"Cep={Cep} Cet={Cet} Pe={Pe} P={P} -> TC={self.TC}")
 
     def clock(self):
         if not self.Pe: # load
             self.trace("LOAD", f"P={self.P}")
-            self.q = self.P
+            self.Q = self.P
         elif self.Cep and self.Cet: # count
             oldq = self.Q
             (b0,b1,b2,b3, c) = num_bits(5, bit_num(*self.Q) + 1)
@@ -370,6 +373,12 @@ class Counter161(Trace):
             self.trace("COUNT", f"Q={oldq} -> Q={self.Q}")
         else:
             self.trace("HOLD", f"Q={self.Q}")
+
+        # XXX duplicate this here after update?
+        if self.Cet and self.Q == (1,1,1,1):
+            self.TC = 1
+        else:
+            self.TC = 0
 
 class Reg273(Trace):
     """
@@ -468,10 +477,10 @@ class Gigatron(Trace):
 
         # U1 clock not explicit.
         # U2 reset not simulated.
-        self.u3_pc03 = Counter161("u3", trace=trace)
-        self.u4_pc47 = Counter161("u4", trace=trace)
-        self.u5_pc811 = Counter161("u5", trace=trace)
-        self.u6_pc1215 = Counter161("u6", trace=trace)
+        self.u3_pc = Counter161("u3", trace=trace)
+        self.u4_pc = Counter161("u4", trace=trace)
+        self.u5_pc = Counter161("u5", trace=trace)
+        self.u6_pc = Counter161("u6", trace=trace)
         self.u7_rom = Rom("u7", rom, trace=trace)
         self.u8_ir = Reg273("u8", trace=trace)
         self.u9_d = Reg273("u9", trace=trace)
@@ -592,37 +601,39 @@ class Gigatron(Trace):
         self.watcher()
 
     def clock1_l(self):
-        last_pc = self.PC
+        self.exec_pc = self.PC # we're still executing the last fetched instruction
 
-        self.u3_pc03.inputs(Pe=self.PLx, P=self.BUS[0:4])
-        self.u4_pc47.inputs(Pe=self.PLx, Cet=self.u3_pc03.TC, P=self.BUS[4:8])
-        self.u5_pc811.inputs(Pe=self.PHx, Cep=self.PLx, Cet=self.u4_pc47.TC, P=self.Y[0:4])
-        self.u6_pc1215.inputs(Pe=self.PHx, Cep=self.PLx, Cet=self.u5_pc811.TC, P=self.Y[4:8])
+        self.u3_pc.inputs(Pe=self.PLx, Cet=1, P=self.BUS[0:4])
+        self.u4_pc.inputs(Pe=self.PLx, Cet=self.u3_pc.TC, P=self.BUS[4:8])
+        self.u5_pc.inputs(Pe=self.PHx, Cep=self.PLx, Cet=self.u4_pc.TC, P=self.Y[0:4])
+        self.u6_pc.inputs(Pe=self.PHx, Cep=self.PLx, Cet=self.u5_pc.TC, P=self.Y[4:8])
         self.u8_ir.inputs(D=self.u7_rom.D[0:8])
         self.u9_d.inputs(D=self.u7_rom.D[8:16])
 
-        self.u3_pc03.clock()
-        self.u4_pc47.clock()
-        self.u5_pc811.clock()
-        self.u6_pc1215.clock()
+        self.u3_pc.clock()
+        self.u4_pc.clock()
+        self.u5_pc.clock()
+        self.u6_pc.clock()
         self.u7_rom.fetch(self.PC)
         self.u8_ir.clock()
         self.u9_d.clock()
 
-        self.exec_pc = last_pc
-        self.PC = self.u3_pc03.Q + self.u4_pc47.Q + self.u5_pc811.Q + self.u6_pc1215.Q
+        self.PC = self.u3_pc.Q + self.u4_pc.Q + self.u5_pc.Q + self.u6_pc.Q
         assert len(self.PC) == 16
         self.IR = self.u8_ir.Q
         self.D = self.u9_d.Q
 
         n = lambda x : bit_num(*x)
         b = lambda x : bit_num(*x).to_bytes(1)
+        if self.PLx == 0 or self.PHx == 0:
+            self.trace("BRANCH", f"target {n(self.PC):04x} PLx={self.PLx} PHx={self.PHx} BUS={n(self.BUS):02x}")
+
         _, _, _, _, line = disasm.disasm1(b(self.IR) + b(self.D))
         self.trace("DECODE", f"PC={n(self.exec_pc):04x} IR={n(self.IR):02x} D={n(self.D):02x}: {line}")
 
     def instr_decode(self):
         # logic based on IR/D
-        self.u11_busjmp.inputs(Aa=self.IR[0:2], Ab=self.IR[2:4])
+        self.u11_busjmp.inputs(Aa=self.IR[0:2], Ea=0, Ab=self.IR[2:4], Eb=self.IR[4])
         self.DEx, self.OEx, self.AEx, self.IEx = self.u11_busjmp.Oa
         self.BFx = self.u11_busjmp.Ob[0]
 
@@ -650,9 +661,10 @@ class Gigatron(Trace):
         self.ALx = bit_inv(self.diode_instr.O[0])    # after diode_instr updated, U15 1 of 8.
         self.AR = bit_invs(*self.diode_instr.O[1:5]) # after diode_instr updated, U15 5 of 8.
 
-        phx = bit_or(self.u14_instr.O[7], self.u11_busjmp.Ob[0]) # after u11/u14 updated, U16 1 of 4.
+        phx = bit_or(self.u14_instr.O[7], self.BFx) # after u11/u14 updated, U16 1 of 4.
         self.PHx = phx
-        self.PLx = bit_and(bit_inv(self.u12_cond.Za), phx) # inv from U15 1 of 8, AND implemented with diodes and pull-up.
+        cond = self.u12_cond.Za
+        self.PLx = bit_and(bit_inv(cond), phx) # inv from U15 1 of 8, AND implemented with diodes and pull-up.
 
         # Note: I "rewired" these to keep the input lines in-order.
         # The schematic has some lines out of order on these muxes for routing reasons.
@@ -766,7 +778,7 @@ class Gigatron(Trace):
         self.u38_extout.inputs(D=self.AC)
         self.u39_inp.inputs(SER=self.serial_input)
 
-        self.u38_exout.clock()
+        self.u38_extout.clock()
         self.u39_inp.clock()
 
         self.LED = self.u38_extout.Q[0:4]
@@ -782,10 +794,10 @@ def test():
     trace = [
         "REG",
         "DECODE",
+        "BRANCH",
+        "u3:*", "u4:*", "u5:*", "u6:*", # PC reg
         #"BUS",
-        #"u36:*", # RAM
-        "RAM"
-        #"u27:*",
+        #"RAM"
         #"ALU",
 
         #'board:PC',
@@ -795,7 +807,8 @@ def test():
     m = Gigatron("board", rom, trace=trace)
     #m.watch(True, PCLO="hex:PC[0:8]", WE="WEx")
     #m.watch(False, PCLO="hex:PC[0:8]", WE="WEx")
-    for _ in range(20):
+    m.watch(True, BUS="hex:BUS", PL="PLx", PH="PHx")
+    for _ in range(20000):
         m.step()
 
 if __name__ == '__main__':
