@@ -27,7 +27,7 @@ def instr(instr, mode, bus, imm):
 
 nop = instr(LD, D_AC, AC, 0)
 
-def run(*instrs, trace=None):
+def run(*instrs, trace=None, pokes=()):
     """
     load up instrs into a machine and run it for
     as many steps as there are instructions.
@@ -44,6 +44,9 @@ def run(*instrs, trace=None):
     rom[:len(rinstrs)] = list(rinstrs)
 
     m = sim.Gigatron("board", rom, trace=trace)
+    for addr,val in pokes:
+        m.u36_ram.store(num_bits(15, addr), num_bits(8, val))
+
     m.step() # first instruction runs twice, do the first one now.
     for _ in range(ninstrs):
         m.step()
@@ -207,6 +210,40 @@ def test_st_modes(trace=None):
     # This one increments X.
     test_st_mode(YXpp_OUT, xval=0x88, yval=0x99, expected_addr=lohi(0x88, 0x99), expected_xval=0x89, trace=trace)
 
+def test_ld_mode(mode, targ_addr=0x11, targ_val=0x22, acval=0x33, xval=0x44, yval=0x55, immval=0x66, expected_xval=None, expected_yval=None, expected_acval=None, trace=None):
+    if expected_xval is None:
+        expected_xval = xval
+    if expected_yval is None:
+        expected_yval = yval
+    if expected_acval is None:
+        expected_acval = acval
+
+    # machine starts with zero'd ram except targ_addr with targ_val.
+    m,cnt = run(
+        instr(LD, D_AC, DATA, acval),
+        instr(LD, D_X, DATA, xval),
+        instr(LD, D_Y, DATA, yval),
+        instr(LD, mode, RAM, immval),
+        trace=trace,
+        pokes=[(targ_addr, targ_val)])
+
+    #print(f"AC={n(m.AC):02x} X={n(m.X):02x} Y={n(m.Y):02x}")
+    assert n(m.AC) == expected_acval
+    assert n(m.X) == expected_xval
+    assert n(m.Y) == expected_yval
+
+def test_ld_modes(trace=None):
+    lohi = lambda l,h : (h << 8) | l
+
+    test_ld_mode(D_AC, targ_addr=0x99, targ_val=0x88, immval=0x99, acval=0xaa, expected_acval=0x88, trace=trace)
+    test_ld_mode(X_AC, targ_addr=0x99, targ_val=0x88, xval=0x99, acval=0xaa, expected_acval=0x88, trace=trace)
+    test_ld_mode(YD_AC, targ_addr=lohi(0x99,0xaa), targ_val=0x88, immval=0x99, yval=0xaa, acval=0xbb, expected_acval=0x88, trace=trace)
+    test_ld_mode(YX_AC, targ_addr=lohi(0x99,0xaa), targ_val=0x88, xval=0x99, yval=0xaa, acval=0xbb, expected_acval=0x88, trace=trace)
+    test_ld_mode(D_X, targ_addr=0x99, targ_val=0x88, immval=0x99, xval=0xaa, expected_xval=0x88, trace=trace)
+    test_ld_mode(D_Y, targ_addr=0x99, targ_val=0x88, immval=0x99, yval=0xaa, expected_yval=0x88, trace=trace)
+    test_ld_mode(D_OUT, targ_addr=0x99, targ_val=0x88, immval=0x99, trace=trace) # TODO: expected_out
+    test_ld_mode(YXpp_OUT, targ_addr=lohi(0x99,0xaa), targ_val=0x88, xval=0x99, yval=0xaa, expected_xval=0x9a, trace=trace) # TODO: expected_out
+
 def test():
     trace=None
     test_nop(trace=trace)
@@ -216,6 +253,7 @@ def test():
     test_branch(trace=trace)
     test_longjump(trace=trace)
     test_st_modes(trace=trace)
+    test_ld_modes(trace=trace)
 
     # TODO: test bus modes
     # TODO: load addressing modes
