@@ -730,8 +730,8 @@ class Gigatron(Trace):
         self.SER_LATCH = self.OUT[7]
 
         out6 = self.OUT[6]
-        if old_out6 == 1 and out6 == 0:
-            self.clock_out6_l()
+        if old_out6 == 0 and out6 == 1:
+            self.clock_out6_h()
 
     def clock1_l_post(self):
         # Note: this really happens in clock1_l of the next instruction,
@@ -767,7 +767,7 @@ class Gigatron(Trace):
             assert False, "bus multiplexer error"
         self.trace("BUS", f"DEx={self.DEx} OEx={self.OEx} AEx={self.AEx} IEx={self.IEx} -> BUS={self.BUS}")
 
-    def clock_out6_l(self):
+    def clock_out6_h(self):
         self.u38_extout.inputs(D=self.AC)
         self.u39_inp.inputs(SER=self.serial_input)
 
