@@ -255,10 +255,8 @@ def test():
     test_st_modes(trace=trace)
     test_ld_modes(trace=trace)
 
-    # TODO: test bus modes
-    # TODO: load addressing modes
+    # TODO: test ld/st/bcc bus modes
     # TODO: Bcc, addressing modes
-    # TODO: long jump, addressing modes
 
 def fixme():
     trace = [
@@ -268,6 +266,7 @@ def fixme():
         "RAM",
         #"u3:*", "u4:*", "u5:*", "u6:*", # PC reg
     ]
+    #test_ld_modes(trace=trace)
     pass
 
 if __name__ == '__main__':
