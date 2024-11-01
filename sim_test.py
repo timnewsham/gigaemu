@@ -267,9 +267,8 @@ def test_ld_busses(trace=None):
     test_ld_bus(bus=AC, acval=0x99, expected_val=0x99, trace=trace)
     test_ld_bus(bus=IN, inpval=0x99, expected_val=0x99, trace=trace)
 
-def test_st_bus(bus=None, outval=0x11, acval=0x22, immval=0x33, inpval=0x44, expected_addr=0x55, expected_val=0x66, trace=None):
+def test_st_bus(bus=None, acval=0x22, immval=0x33, inpval=0x44, expected_addr=0x55, expected_val=0x66, trace=None):
     m,cnt = run(
-        instr(LD, D_OUT, DATA, outval),
         instr(LD, D_AC, DATA, acval),
         instr(ST, D_AC, bus, immval),
         inp=inpval,
@@ -285,6 +284,24 @@ def test_st_busses(trace=None):
     test_st_bus(bus=AC, acval=0x99, immval=0xaa, expected_addr=0xaa, expected_val=0x99, trace=trace)
     test_st_bus(bus=IN, inpval=0x99, immval=0xaa, expected_addr=0xaa, expected_val=0x99, trace=trace)
 
+def test_bcc_bus(bus=None, acval=0x22, immval=0x33, inpval=0x44, expected_pc=0x55, pokes=(), trace=None):
+    m,cnt = run(
+        instr(LD, D_AC, DATA, acval),
+        instr(Bcc, BRA, bus, immval),
+        nop, # delay slot
+        inp=inpval,
+        pokes=pokes,
+        trace=trace)
+
+    #print(f"PC={n(m.PC):04x}")
+    assert n(m.PC) == expected_pc
+
+def test_bcc_busses(trace=None):
+    test_bcc_bus(bus=DATA, immval=0x99, expected_pc=0x99, trace=trace)
+    test_bcc_bus(bus=RAM, immval=0x99, pokes=[(0x99, 0xaa)], expected_pc=0xaa, trace=trace)
+    test_bcc_bus(bus=AC, acval=0x99, expected_pc=0x99, trace=trace)
+    test_bcc_bus(bus=IN, inpval=0x99, expected_pc=0x99, trace=trace)
+
 def test():
     trace=None
     test_nop(trace=trace)
@@ -297,8 +314,7 @@ def test():
     test_st_busses(trace=trace)
     test_ld_modes(trace=trace)
     test_ld_busses(trace=trace)
-
-    # TODO: test bcc bus modes
+    test_bcc_busses(trace=trace)
 
 def fixme():
     trace = [

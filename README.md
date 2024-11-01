@@ -8,8 +8,7 @@ This directory has some files that let me explore the gigatron computer design.
 
 ## In Progress
 
-This is still incomplete.
-The emulator seems to work well, but hasnt been rigorously tested.
-The simulator is starting to work, but testing is still ongoing.
-The emulator and simulator should be tested against each other.
-A lot more could be done to support I/O or live debugging and probing.
+* The simulator has been tested quite a bit with `sim_test.py`.
+* The emulator seems to work well, but hasnt been rigorously tested.
+* The emulator and simulator should be tested against each other.
+* A lot more could be done to support I/O or live debugging and probing.
