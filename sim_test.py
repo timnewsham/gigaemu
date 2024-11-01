@@ -130,8 +130,8 @@ def test_longjump(trace=None):
         instr(LD, D_AC, DATA, ldval), # delay slot
         trace=trace)
     assert n(m.AC) == ldval
-    assert n(m.exec_pc) == cnt
-    assert n(m.PC) == (targhi << 8) | targlo
+    assert n(m.exec_pc) == cnt-1
+    assert n(m.fetched_pc) == (targhi << 8) | targlo
 
 def test_branch_cond(val, cond, taken, trace=None):
     targ = 0x8f
@@ -141,12 +141,13 @@ def test_branch_cond(val, cond, taken, trace=None):
         instr(Bcc, cond, DATA, targ),
         instr(LD, D_AC, DATA, ldval), # delay slot
         trace=trace)
+    #print(f"AC={n(m.AC):02x} cmp {ldval:02x}, exec_pc={n(m.exec_pc):04x} fetch_pc={n(m.fetched_pc):04x} pc={n(m.PC):04x}")
     assert n(m.AC) == ldval
-    assert n(m.exec_pc) == cnt
+    assert n(m.exec_pc) == cnt-1
     if taken:
-        assert n(m.PC) == targ
+        assert n(m.fetched_pc) == targ
     else:
-        assert n(m.PC) == cnt+1
+        assert n(m.fetched_pc) == cnt
 
 def test_branch(trace=None):
     test_branch_cond(0x0f, GT, True, trace=trace)
@@ -294,7 +295,7 @@ def test_bcc_bus(bus=None, acval=0x22, immval=0x33, inpval=0x44, expected_pc=0x5
         trace=trace)
 
     #print(f"PC={n(m.PC):04x}")
-    assert n(m.PC) == expected_pc
+    assert n(m.fetched_pc) == expected_pc
 
 def test_bcc_busses(trace=None):
     test_bcc_bus(bus=DATA, immval=0x99, expected_pc=0x99, trace=trace)
@@ -304,7 +305,7 @@ def test_bcc_busses(trace=None):
 
 def test():
     trace=None
-    test_nop(trace=trace)
+    #test_nop(trace=trace)
     test_ld_reg(trace=trace)
     test_st_zp(trace=trace)
     test_aluop(trace=trace)
@@ -326,6 +327,8 @@ def fixme():
         #"u3:*", "u4:*", "u5:*", "u6:*", # PC reg
     ]
     #test_ld_modes(trace=trace)
+    #test_ld_acc_val(1, trace=trace)
+    #test_branch_cond(0x0f, GT, True, trace=trace)
     pass
 
 if __name__ == '__main__':

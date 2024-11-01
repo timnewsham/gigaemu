@@ -186,7 +186,7 @@ class Machine:
         # this probably belongs elsewhere, but we've been using self.ir and self.d above.
         self.ir, self.d = ir, d
 
-        self.trace('STATE', f"pc={self.pc:04x} ir={self.ir:02x} d={self.d:02x} acc={self.acc:02x} x={self.x:02x} y={self.y:02x}")
+        self.trace('STATE', f"pc={self.pc:04x} ir={self.ir:02x} d={self.d:02x} acc={self.acc:02x} x={self.x:02x} y={self.y:02x} out={self.outp:02x}")
 
 def main():
     fn = 'ROMv6.rom'

@@ -538,6 +538,7 @@ class Gigatron(Trace):
         # give values to all signals to inert values
         # clock_l:
         self.PC = (0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0)
+        self.fetched_pc = self.PC
         self.exec_pc = self.PC
         self.IR = (0,0,0,0,0,0,0,0)
         self.D = (0,0,0,0,0,0,0,0)
@@ -563,7 +564,7 @@ class Gigatron(Trace):
         self.ALU = (0,0,0,0,0,0,0,0)
         self.CO = 0
         self.WEx = 1
-        # updated in clock2_l
+        # updated in clock2_h
         self.AC = (0,0,0,0,0,0,0,0)
         self.X = (0,0,0,0,0,0,0,0)
         self.Y = (0,0,0,0,0,0,0,0)
@@ -583,45 +584,53 @@ class Gigatron(Trace):
         self.u7_rom.fetch(self.PC)
 
     def step(self):
+        self.exec_pc = self.fetched_pc
+
         n = lambda x : bit_num(*x)
         self.trace("REG", f"PC={n(self.exec_pc):04x} AC={n(self.AC):02x} X={n(self.X):02x} Y={n(self.Y):02x} IN={n(self.IN):02x} OUT={n(self.OUT):02x}")
 
-        self.clock1_l()
-        self.instr_decode()
-        self.clock2_l()
-        self.clock1_l_post()
+        self.clock1_l()         # latch IR/D (store to RAM)
+        self.instr_decode()     # decode IR/D into control signals, ALU calculation
+        self.clock1_h()         # update PC
+        self.clock2_h()         # latch AC/X/Y/OUT
+        self.clock1_l_post()    # store to RAM (load IR/D)
         self.watcher()
 
     def clock1_l(self):
-        self.exec_pc = self.PC # we're still executing the last fetched instruction
+        #self.u7_rom.fetch(self.PC)
+        self.u8_ir.inputs(D=self.u7_rom.D[0:8])
+        self.u9_d.inputs(D=self.u7_rom.D[8:16])
 
+        self.u8_ir.clock()
+        self.u9_d.clock()
+
+        self.IR = self.u8_ir.Q
+        self.D = self.u9_d.Q
+
+        n = lambda x : bit_num(*x)
+        b = lambda x : bit_num(*x).to_bytes(1)
+        _, _, _, _, line = disasm.disasm1(b(self.IR) + b(self.D))
+        self.trace("DECODE", f"PC={n(self.exec_pc):04x} IR={n(self.IR):02x} D={n(self.D):02x}: {line}")
+
+    def clock1_h(self):
         self.u3_pc.inputs(Pe=self.PLx, Cet=1, P=self.BUS[0:4])
         self.u4_pc.inputs(Pe=self.PLx, Cet=self.u3_pc.TC, P=self.BUS[4:8])
         self.u5_pc.inputs(Pe=self.PHx, Cep=self.PLx, Cet=self.u4_pc.TC, P=self.Y[0:4])
         self.u6_pc.inputs(Pe=self.PHx, Cep=self.PLx, Cet=self.u5_pc.TC, P=self.Y[4:8])
-        self.u8_ir.inputs(D=self.u7_rom.D[0:8])
-        self.u9_d.inputs(D=self.u7_rom.D[8:16])
 
         self.u3_pc.clock()
         self.u4_pc.clock()
         self.u5_pc.clock()
         self.u6_pc.clock()
         self.u7_rom.fetch(self.PC)
-        self.u8_ir.clock()
-        self.u9_d.clock()
 
+        self.fetched_pc = self.PC
         self.PC = self.u3_pc.Q + self.u4_pc.Q + self.u5_pc.Q + self.u6_pc.Q
         assert len(self.PC) == 16
-        self.IR = self.u8_ir.Q
-        self.D = self.u9_d.Q
 
         n = lambda x : bit_num(*x)
-        b = lambda x : bit_num(*x).to_bytes(1)
         if self.PLx == 0 or self.PHx == 0:
             self.trace("BRANCH", f"target {n(self.PC):04x} PLx={self.PLx} PHx={self.PHx} BUS={n(self.BUS):02x}")
-
-        _, _, _, _, line = disasm.disasm1(b(self.IR) + b(self.D))
-        self.trace("DECODE", f"PC={n(self.exec_pc):04x} IR={n(self.IR):02x} D={n(self.D):02x}: {line}")
 
     def instr_decode(self):
         # logic based on IR/D
@@ -704,7 +713,7 @@ class Gigatron(Trace):
         n = lambda x : bit_num(*x)
         self.trace("PC", f"pc={n(self.PC):04x} ir={n(self.IR):02x} d={n(self.D):02x}")
 
-    def clock2_l(self):
+    def clock2_h(self):
         self.u27_regac.inputs(D=self.ALU, EO=self.LDx)
         self.u29_regx.inputs(P=self.ALU[0:4], Pe=self.XLx, Cep=self.IX, Cet=1)
         self.u30_regx.inputs(P=self.ALU[4:8], Pe=self.XLx, Cep=self.IX, Cet=self.u29_regx.TC)
