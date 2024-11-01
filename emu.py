@@ -27,6 +27,9 @@ def neg8(x):
 def add8(x, y):
     return (x + y) & 0xff
 
+def add16(x, y):
+    return (x + y) & 0xffff
+
 def add8c(x, y):
     sum = x + y
     result = sum & 0xff
@@ -155,7 +158,7 @@ class Machine:
 
         # update pc
         self.last_pc = self.pc
-        self.pc = add8(self.pc, 1)
+        self.pc = add16(self.pc, 1)
         if oper == Bcc:
             # note: cpu computes zero from carry out of "alu" op above (because alu
             # just computed (not(acc) + 1) which only overflows when acc is zero.
