@@ -761,6 +761,7 @@ class Gigatron(Trace):
         elif self.AEx == 0:
             self.BUS = self.AC
         elif self.IEx == 0:
+            self.IN = self.u39_inp.Q
             self.BUS = self.IN
         else:
             self.BUS = None

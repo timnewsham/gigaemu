@@ -27,7 +27,7 @@ def instr(instr, mode, bus, imm):
 
 nop = instr(LD, D_AC, AC, 0)
 
-def run(*instrs, trace=None, pokes=()):
+def run(*instrs, trace=None, pokes=(), inp=None):
     """
     load up instrs into a machine and run it for
     as many steps as there are instructions.
@@ -44,8 +44,11 @@ def run(*instrs, trace=None, pokes=()):
     rom[:len(rinstrs)] = list(rinstrs)
 
     m = sim.Gigatron("board", rom, trace=trace)
+
     for addr,val in pokes:
         m.u36_ram.store(num_bits(15, addr), num_bits(8, val))
+    if inp is not None:
+        m.u39_inp.Q = num_bits(8, inp)
 
     m.step() # first instruction runs twice, do the first one now.
     for _ in range(ninstrs):
@@ -210,7 +213,7 @@ def test_st_modes(trace=None):
     # This one increments X.
     test_st_mode(YXpp_OUT, xval=0x88, yval=0x99, expected_addr=lohi(0x88, 0x99), expected_xval=0x89, trace=trace)
 
-def test_ld_mode(mode, targ_addr=0x11, targ_val=0x22, acval=0x33, xval=0x44, yval=0x55, immval=0x66, expected_xval=None, expected_yval=None, expected_acval=None, trace=None):
+def test_ld_mode(mode, targ_addr=0x11, targ_val=0x22, acval=0x33, xval=0x44, yval=0x55, immval=0x66, expected_xval=None, expected_yval=None, expected_acval=None, expected_out=None, trace=None):
     if expected_xval is None:
         expected_xval = xval
     if expected_yval is None:
@@ -231,6 +234,8 @@ def test_ld_mode(mode, targ_addr=0x11, targ_val=0x22, acval=0x33, xval=0x44, yva
     assert n(m.AC) == expected_acval
     assert n(m.X) == expected_xval
     assert n(m.Y) == expected_yval
+    if expected_out is not None:
+        assert n(m.OUT) == expected_out
 
 def test_ld_modes(trace=None):
     lohi = lambda l,h : (h << 8) | l
@@ -241,8 +246,44 @@ def test_ld_modes(trace=None):
     test_ld_mode(YX_AC, targ_addr=lohi(0x99,0xaa), targ_val=0x88, xval=0x99, yval=0xaa, acval=0xbb, expected_acval=0x88, trace=trace)
     test_ld_mode(D_X, targ_addr=0x99, targ_val=0x88, immval=0x99, xval=0xaa, expected_xval=0x88, trace=trace)
     test_ld_mode(D_Y, targ_addr=0x99, targ_val=0x88, immval=0x99, yval=0xaa, expected_yval=0x88, trace=trace)
-    test_ld_mode(D_OUT, targ_addr=0x99, targ_val=0x88, immval=0x99, trace=trace) # TODO: expected_out
-    test_ld_mode(YXpp_OUT, targ_addr=lohi(0x99,0xaa), targ_val=0x88, xval=0x99, yval=0xaa, expected_xval=0x9a, trace=trace) # TODO: expected_out
+    test_ld_mode(D_OUT, targ_addr=0x99, targ_val=0x88, immval=0x99, expected_out=0x88, trace=trace)
+    test_ld_mode(YXpp_OUT, targ_addr=lohi(0x99,0xaa), targ_val=0x88, xval=0x99, yval=0xaa, expected_xval=0x9a, expected_out=0x88, trace=trace)
+
+def test_ld_bus(bus=None, outval=0x11, acval=0x22, immval=0x33, inpval=0x44, expected_val=0x55, pokes=(), trace=None):
+    m,cnt = run(
+        instr(LD, D_OUT, DATA, outval),
+        instr(LD, D_AC, DATA, acval),
+        instr(LD, D_X, bus, immval),
+        pokes=pokes,
+        inp=inpval,
+        trace=trace)
+
+    #print(f"AC={n(m.AC):02x} X={n(m.X):02x} Y={n(m.Y):02x}")
+    assert n(m.X) == expected_val
+
+def test_ld_busses(trace=None):
+    test_ld_bus(bus=DATA, immval=0x99, expected_val=0x99, trace=trace)
+    test_ld_bus(bus=RAM, immval=0x99, pokes=[(0x99, 0xaa)], expected_val=0xaa, trace=trace)
+    test_ld_bus(bus=AC, acval=0x99, expected_val=0x99, trace=trace)
+    test_ld_bus(bus=IN, inpval=0x99, expected_val=0x99, trace=trace)
+
+def test_st_bus(bus=None, outval=0x11, acval=0x22, immval=0x33, inpval=0x44, expected_addr=0x55, expected_val=0x66, trace=None):
+    m,cnt = run(
+        instr(LD, D_OUT, DATA, outval),
+        instr(LD, D_AC, DATA, acval),
+        instr(ST, D_AC, bus, immval),
+        inp=inpval,
+        trace=trace)
+
+    ram_val = m.u36_ram.fetch(num_bits(15, expected_addr))
+    #print(f"{expected_addr:04x} has {n(ram_val):02x}")
+    assert n(ram_val) == expected_val
+
+def test_st_busses(trace=None):
+    test_st_bus(bus=DATA, immval=0x99, expected_addr=0x99, expected_val=0x99, trace=trace)
+    # ST bus=RAM results are undefined.
+    test_st_bus(bus=AC, acval=0x99, immval=0xaa, expected_addr=0xaa, expected_val=0x99, trace=trace)
+    test_st_bus(bus=IN, inpval=0x99, immval=0xaa, expected_addr=0xaa, expected_val=0x99, trace=trace)
 
 def test():
     trace=None
@@ -253,17 +294,19 @@ def test():
     test_branch(trace=trace)
     test_longjump(trace=trace)
     test_st_modes(trace=trace)
+    test_st_busses(trace=trace)
     test_ld_modes(trace=trace)
+    test_ld_busses(trace=trace)
 
-    # TODO: test ld/st/bcc bus modes
-    # TODO: Bcc, addressing modes
+    # TODO: test bcc bus modes
 
 def fixme():
     trace = [
         "REG",
         "DECODE",
-        "ADDR",
-        "RAM",
+        "BUS",
+        #"ADDR",
+        #"RAM",
         #"u3:*", "u4:*", "u5:*", "u6:*", # PC reg
     ]
     #test_ld_modes(trace=trace)
