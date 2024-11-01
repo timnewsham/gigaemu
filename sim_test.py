@@ -57,8 +57,9 @@ def run(*instrs, trace=None, pokes=(), inp=None):
 
 def test_nop(trace=None):
     m,cnt = run(nop, trace=trace)
-    assert n(m.exec_pc) == cnt
-    assert n(m.PC) == cnt + 1
+    assert n(m.exec_pc) == cnt-1
+    assert n(m.fetched_pc) == cnt
+    assert n(m.PC) == cnt+1
     assert n(m.AC) == 0
     assert n(m.X) == 0
     assert n(m.Y) == 0
@@ -305,7 +306,7 @@ def test_bcc_busses(trace=None):
 
 def test():
     trace=None
-    #test_nop(trace=trace)
+    test_nop(trace=trace)
     test_ld_reg(trace=trace)
     test_st_zp(trace=trace)
     test_aluop(trace=trace)

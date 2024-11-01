@@ -703,6 +703,7 @@ class Gigatron(Trace):
         self.PHx = bit_or(self.u14_instr.O[7], self.BFx) # after u11/u14 updated, U16 1 of 4.
         cond = self.u12_cond.Za
         self.PLx = bit_and(bit_inv(cond), self.PHx) # inv from U15 1 of 8, AND implemented with diodes and pull-up.
+        self.trace("COND", f"sel={sel} ia={ia} Ea={self.u14_instr.O[7]} cond={cond} PHx={self.PHx} PLx={self.PLx}")
 
         # WEx comes from bit_or(CLK1, Wx), but we don't have explicit clock signals.
         # it will latch RAM when Wx is true (0) and CLK1 goes low.

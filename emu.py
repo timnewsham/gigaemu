@@ -166,14 +166,15 @@ class Machine:
             pos = not neg and not zero    # true when a-b > 0
             take_branch = {
                 0: lambda: True,        # long jump (always)
-                1: lambda: neg,         # bgt (a-b < 0)
-                2: lambda: pos,         # blt (a-b > 0)
-                3: lambda: not zero,    # bne (a-b != 0)
-                4: lambda: zero,        # beq (a-b == 0)
-                5: lambda: not pos,     # bge (a-b <= 0)
-                6: lambda: not neg,     # ble (a-b >= 0)
+                1: lambda: pos,         # bgt (ac > 0)
+                2: lambda: neg,         # blt (ac < 0)
+                3: lambda: not zero,    # bne (ac != 0)
+                4: lambda: zero,        # beq (ac == 0)
+                5: lambda: zero or pos, # bge (ac >= 0)
+                6: lambda: zero or neg, # ble (a-b <= 0)
                 7: lambda: True,        # bra (always)
             }[mode]()
+            #print(f"Bcc mode={mode} take={take_branch}")
 
             if take_branch and mode == 0: # long jump to page y
                 self.pc = (self.y << 8) | b

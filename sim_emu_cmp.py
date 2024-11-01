@@ -14,16 +14,12 @@ def model_check(rom, simtrace=None, emutrace=None):
     step = 0
     while True:
         fail = None
-        """
-        if n(machsim.exec_pc) != machemu.pc:
-            fail = f"SIM PC={n(machsim.PC):04x} EMU PC={machemu.pc:04x}"
-        elif n(machsim.IR) != machemu.ir:
-            fail = f"SIM IR={n(machsim.IR):02x} EMU IR={machemu.ir:02x}"
-        elif n(machsim.D) != machemu.d:
-            fail = f"SIM D={n(machsim.D):02x} EMU D={machemu.d:02x}"
-        """
-        if False:
-            pass
+        if n(machsim.fetched_pc) != machemu.last_pc:
+            fail = f"SIM PC={n(machsim.fetched_pc):04x} EMU PC={machemu.last_pc:04x}"
+        #elif n(machsim.IR) != machemu.ir:
+        #    fail = f"SIM IR={n(machsim.IR):02x} EMU IR={machemu.ir:02x}"
+        #elif n(machsim.D) != machemu.d:
+        #    fail = f"SIM D={n(machsim.D):02x} EMU D={machemu.d:02x}"
         elif n(machsim.AC) != machemu.acc:
             fail = f"SIM AC={n(machsim.AC):02x} EMU AC:{machemu.acc:02x}"
         elif n(machsim.X) != machemu.x:
@@ -35,18 +31,21 @@ def model_check(rom, simtrace=None, emutrace=None):
         # ext out?
 
         if fail is not None:
-            print(f"step {step}: PC={machemu.pc:04x}: {fail}")
+            print(f"step {step}: PC={machemu.last_pc:04x}: {fail}")
             assert False
 
         machsim.step()
         machemu.step()
-        print()
+        if simtrace or emutrace:
+            print()
         step += 1
 
 def main():
     fn = 'ROMv6.rom'
-    simtrace = ['DECODE', 'REG']
-    emutrace = ['EXEC', 'FETCH', 'STATE']
+    simtrace = None
+    emutrace = None
+    #simtrace = ['DECODE', 'REG', 'BRANCH', 'COND']
+    #emutrace = ['EXEC', 'FETCH', 'STATE']
     rom = open(fn, 'rb').read()
     model_check(rom, simtrace=simtrace, emutrace=emutrace)
 
