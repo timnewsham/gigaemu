@@ -87,7 +87,9 @@ class Machine:
         bus = (self.ir) & 3
         self.trace('EXEC', f"{self.last_pc:04x} ir={self.ir:02x} decode={oper:x}.{mode:x}.{bus:x} d={self.d:02x}")
 
-        if oper != Bcc:
+        if oper == Bcc:
+            addr = self.d
+        else:
             # decode low/hi/incx
             low, hi, incx = {
                 0: lambda: (self.d, 0, 0),       # [D], AC
