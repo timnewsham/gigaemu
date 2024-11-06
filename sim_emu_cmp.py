@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import sys
 import sim
 import emu
 
@@ -42,11 +43,14 @@ def model_check(rom, simtrace=None, emutrace=None):
 
 def main():
     fn = 'ROMv6.rom'
+    if len(sys.argv) > 1:
+        fn = sys.argv[1]
+    rom = sim.load(fn)
+
     simtrace = None
     emutrace = None
-    #simtrace = ['DECODE', 'REG', 'BRANCH', 'COND']
-    #emutrace = ['EXEC', 'FETCH', 'STATE']
-    rom = open(fn, 'rb').read()
+    simtrace = ['DECODE', 'REG', 'BRANCH', 'COND']
+    emutrace = ['EXEC', 'FETCH', 'STATE']
     model_check(rom, simtrace=simtrace, emutrace=emutrace)
 
 if __name__ == '__main__':
