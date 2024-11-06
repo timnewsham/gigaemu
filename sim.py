@@ -19,6 +19,8 @@ active-high logic function.
 TODO: not simulating reset conditions right now.
 """
 
+import re
+import sys
 import disasm
 
 # primitives section
@@ -733,6 +735,9 @@ class Gigatron(Trace):
         self.X = self.u29_regx.Q + self.u30_regx.Q
         self.Y = self.u31_regy.Q
         self.OUT = self.u37_regout.Q
+        if self.OLx == 0:
+            n = lambda x : bit_num(*x)
+            self.trace("OUT", f"{self.OUT} {n(self.OUT)}")
         self.RGB = bit_num(*self.OUT[0:2]), bit_num(*self.OUT[2:4]), bit_num(*self.OUT[4:6])
         self.HSYNCx = self.OUT[6]
         self.VSYNCx = self.OUT[7]
@@ -789,17 +794,36 @@ class Gigatron(Trace):
         self.AUDIO = self.u38_extout.Q[4:8]
         self.IN = self.u39_inp.Q
 
+def load(fn):
+    if fn.endswith('lst'):
+        dat = []
+        for l in open(fn, 'r'):
+            m = re.search("^[0-9a-f]{4} ([0-9a-f]{4}) ", l)
+            if not m:
+                continue
+            dat += bytes.fromhex(m.group(1))
+    else:
+        dat = open(fn, 'rb').read()
+
+    n = 2*64*1024 - len(dat)
+    if n > 0:
+        dat += b'\0' * n
+    return dat
+
 def test():
     test_prims()
 
     fn = 'ROMv6.rom'
-    rom = open(fn, 'rb').read()
+    if len(sys.argv) > 1:
+        fn = sys.argv[1]
+    rom = load(fn)
 
     trace = [
-        "REG",
-        "DECODE",
-        "BRANCH",
-        "u3:*", "u4:*", "u5:*", "u6:*", # PC reg
+        #"REG",
+        "OUT",
+        #"DECODE",
+        #"BRANCH",
+        #"u3:*", "u4:*", "u5:*", "u6:*", # PC reg
         #"BUS",
         #"RAM"
         #"ALU",
@@ -811,7 +835,7 @@ def test():
     m = Gigatron("board", rom, trace=trace)
     #m.watch(True, PCLO="hex:PC[0:8]", WE="WEx")
     #m.watch(False, PCLO="hex:PC[0:8]", WE="WEx")
-    m.watch(True, BUS="hex:BUS", PL="PLx", PH="PHx")
+    #m.watch(True, BUS="hex:BUS", PL="PLx", PH="PHx")
     for _ in range(20000):
         m.step()
 

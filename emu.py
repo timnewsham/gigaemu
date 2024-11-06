@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import re
 import sys
 
 # opers
@@ -148,6 +149,9 @@ class Machine:
             elif mode == 7 and oper != ST: # [Y,X++], OUT
                 self.outp = alu
 
+            if (mode == 6 or mode == 7) and oper != ST:
+                self.trace('OUT', f"outp {self.outp}")
+
             # latch extended output when OUT6 goes from LOW to HI.
             new_out6 = (self.outp & 0x40) != 0
             if not old_out6 and new_out6:
@@ -194,9 +198,27 @@ class Machine:
 
         self.trace('STATE', f"pc={self.pc:04x} ir={self.ir:02x} d={self.d:02x} acc={self.acc:02x} x={self.x:02x} y={self.y:02x} out={self.outp:02x}")
 
+def load(fn):
+    if fn.endswith('lst'):
+        dat = []
+        for l in open(fn, 'r'):
+            m = re.search("^[0-9a-f]{4} ([0-9a-f]{4}) ", l)
+            if not m:
+                continue
+            dat += bytes.fromhex(m.group(1))
+    else:
+        dat = open(fn, 'rb').read()
+
+    n = 2*64*1024 - len(dat)
+    if n > 0:
+        dat += b'\0' * n
+    return dat
+
 def main():
     fn = 'ROMv6.rom'
-    rom = open(fn, 'rb').read()
+    if len(sys.argv) > 1:
+        fn = sys.argv[1]
+    rom = load(fn)
 
     if 0:
         m = Machine(rom, ['EXEC', 'EXT', 'BRANCH'])
@@ -208,7 +230,8 @@ def main():
             m.step()
         print(f"{m.pc:04x}")
     if 1:
-        m = Machine(rom, ['EXT'])
+        #m = Machine(rom, ['EXT'])
+        m = Machine(rom, ['OUT'])
         while True:
             m.step()
 
